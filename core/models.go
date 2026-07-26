@@ -63,6 +63,21 @@ type Aircraft struct {
 	HighestProcessed    bool
 	FastestProcessed    bool
 	SlowestProcessed    bool
+
+	// Fields used by the distance leaderboards (see stats-distance.go).
+	// Populated via a LEFT JOIN against route_data, so they may be invalid
+	// (sql.NullString / sql.NullFloat64 not Valid) when no route was matched.
+	FurthestFlownProcessed bool
+	MostRemainingProcessed bool
+	LongestRouteProcessed  bool
+	OriginIcaoCode         sql.NullString
+	OriginIataCode         sql.NullString
+	OriginLat              sql.NullFloat64
+	OriginLon              sql.NullFloat64
+	DestinationIcaoCode    sql.NullString
+	DestinationIataCode    sql.NullString
+	DestinationLat         sql.NullFloat64
+	DestinationLon         sql.NullFloat64
 }
 
 type InterestingAircraft struct {
