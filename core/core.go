@@ -108,6 +108,7 @@ func main() {
 	updateRegistrationsTicker := time.NewTicker(30 * time.Second)
 	updateRoutesTicker := time.NewTicker(300 * time.Second)
 	updateInterestingSeenTicker := time.NewTicker(120 * time.Second)
+	updateDistanceStatisticsTicker := time.NewTicker(300 * time.Second)
 
 	// Welcome to skystats
 	if banner, err := os.ReadFile("../docs/logo/skystats_ascii.txt"); err == nil {
@@ -126,6 +127,7 @@ func main() {
 		updateRegistrationsTicker.Stop()
 		updateRoutesTicker.Stop()
 		updateInterestingSeenTicker.Stop()
+		updateDistanceStatisticsTicker.Stop()
 		pg.Close()
 	}()
 
@@ -146,6 +148,9 @@ func main() {
 		case <-updateInterestingSeenTicker.C:
 			log.Debug().Msg("Update Interesting Seen")
 			updateInterestingSeen(pg)
+		case <-updateDistanceStatisticsTicker.C:
+			log.Debug().Msg("Update Distance Statistics")
+			updateDistanceStatistics(pg)
 		}
 	}
 

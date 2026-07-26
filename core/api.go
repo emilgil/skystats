@@ -96,6 +96,9 @@ func (s *APIServer) Start() {
 			stats.GET("/motion/slowest", s.getSlowestAircraft)
 			stats.GET("/motion/highest", s.getHighestAircraft)
 			stats.GET("/motion/lowest", s.getLowestAircraft)
+			stats.GET("/motion/furthest-flown", s.getFurthestFlownAircraft)
+			stats.GET("/motion/most-remaining", s.getMostRemainingAircraft)
+			stats.GET("/motion/longest-route", s.getLongestRouteAircraft)
 
 			stats.GET("/interesting/metrics", s.getInterestingMetrics)
 			stats.GET("/interesting/civilian", func(c *gin.Context) { s.getRecentInterestingAircraft(c, "Civ") })
@@ -670,6 +673,150 @@ func (s *APIServer) getLowestAircraft(c *gin.Context) {
 			"last_seen":           lastSeen,
 			"barometric_altitude": barometricAltitude,
 			"geometric_altitude":  geometricAltitude,
+		})
+	}
+
+	c.JSON(http.StatusOK, aircraft)
+}
+
+func (s *APIServer) getFurthestFlownAircraft(c *gin.Context) {
+	limit := s.getLimit("record_holder_table_limit")
+
+	query := `
+		SELECT hex, flight, registration, type, first_seen, last_seen,
+			   origin_icao_code, origin_iata_code,
+			   destination_icao_code, destination_iata_code, distance_flown
+		FROM furthest_flown_aircraft
+		ORDER BY distance_flown DESC
+		LIMIT $1`
+
+	rows, err := s.pg.db.Query(context.Background(), query, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	aircraft := []gin.H{}
+	for rows.Next() {
+		var hex, flight, registration, aircraftType string
+		var firstSeen, lastSeen *time.Time
+		var originIcao, originIata, destinationIcao, destinationIata *string
+		var distanceFlown float64
+
+		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
+			&lastSeen, &originIcao, &originIata, &destinationIcao, &destinationIata, &distanceFlown)
+		if err != nil {
+			continue
+		}
+
+		aircraft = append(aircraft, gin.H{
+			"hex":                   hex,
+			"flight":                flight,
+			"registration":          registration,
+			"type":                  aircraftType,
+			"first_seen":            firstSeen,
+			"last_seen":             lastSeen,
+			"origin_icao_code":      originIcao,
+			"origin_iata_code":      originIata,
+			"destination_icao_code": destinationIcao,
+			"destination_iata_code": destinationIata,
+			"distance_flown":        distanceFlown,
+		})
+	}
+
+	c.JSON(http.StatusOK, aircraft)
+}
+
+func (s *APIServer) getMostRemainingAircraft(c *gin.Context) {
+	limit := s.getLimit("record_holder_table_limit")
+
+	query := `
+		SELECT hex, flight, registration, type, first_seen, last_seen,
+			   destination_icao_code, destination_iata_code, distance_remaining
+		FROM most_remaining_aircraft
+		ORDER BY distance_remaining DESC
+		LIMIT $1`
+
+	rows, err := s.pg.db.Query(context.Background(), query, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	aircraft := []gin.H{}
+	for rows.Next() {
+		var hex, flight, registration, aircraftType string
+		var firstSeen, lastSeen *time.Time
+		var destinationIcao, destinationIata *string
+		var distanceRemaining float64
+
+		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
+			&lastSeen, &destinationIcao, &destinationIata, &distanceRemaining)
+		if err != nil {
+			continue
+		}
+
+		aircraft = append(aircraft, gin.H{
+			"hex":                   hex,
+			"flight":                flight,
+			"registration":          registration,
+			"type":                  aircraftType,
+			"first_seen":            firstSeen,
+			"last_seen":             lastSeen,
+			"destination_icao_code": destinationIcao,
+			"destination_iata_code": destinationIata,
+			"distance_remaining":    distanceRemaining,
+		})
+	}
+
+	c.JSON(http.StatusOK, aircraft)
+}
+
+func (s *APIServer) getLongestRouteAircraft(c *gin.Context) {
+	limit := s.getLimit("record_holder_table_limit")
+
+	query := `
+		SELECT hex, flight, registration, type, first_seen, last_seen,
+			   origin_icao_code, origin_iata_code,
+			   destination_icao_code, destination_iata_code, route_distance
+		FROM longest_route_aircraft
+		ORDER BY route_distance DESC
+		LIMIT $1`
+
+	rows, err := s.pg.db.Query(context.Background(), query, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	aircraft := []gin.H{}
+	for rows.Next() {
+		var hex, flight, registration, aircraftType string
+		var firstSeen, lastSeen *time.Time
+		var originIcao, originIata, destinationIcao, destinationIata *string
+		var routeDistance float64
+
+		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
+			&lastSeen, &originIcao, &originIata, &destinationIcao, &destinationIata, &routeDistance)
+		if err != nil {
+			continue
+		}
+
+		aircraft = append(aircraft, gin.H{
+			"hex":                   hex,
+			"flight":                flight,
+			"registration":          registration,
+			"type":                  aircraftType,
+			"first_seen":            firstSeen,
+			"last_seen":             lastSeen,
+			"origin_icao_code":      originIcao,
+			"origin_iata_code":      originIata,
+			"destination_icao_code": destinationIcao,
+			"destination_iata_code": destinationIata,
+			"route_distance":        routeDistance,
 		})
 	}
 
