@@ -1,6 +1,25 @@
 <script>
     import { onMount } from 'svelte';
     import { settings } from '../stores/settings';
+    import { hiddenCards } from '../stores/hiddenCards';
+    import { dashboardCards } from '../lib/dashboardCards';
+
+    const cardTabLabels = {
+        global: 'Always Visible',
+        activity: 'Activity',
+        'route-stat': 'Route Information',
+        'interesting-stat': 'Interesting Aircraft',
+        'motion-stat': 'Record Holders'
+    };
+    const cardTabOrder = ['global', 'activity', 'route-stat', 'interesting-stat', 'motion-stat'];
+
+    function toggleCardVisibility(cardId, visible) {
+        if (visible) {
+            hiddenCards.show(cardId);
+        } else {
+            hiddenCards.hide(cardId);
+        }
+    }
     import { IconBrandGithub } from '@tabler/icons-svelte';
 
 
@@ -108,6 +127,32 @@
                 <div class="flex-1 {activeMenuItem === 'about' ? 'flex items-center justify-center' : ''}">
                     {#if activeMenuItem === 'display'}
                         <h4 class="text-lg font-semibold mb-6">Display Settings</h4>
+
+                        <!-- Card Visibility -->
+                        <div class="mb-8">
+                            <p class="text-xl font-extralight tracking-wider mb-4">Visible Cards</p>
+                            <p class="text-m text-base-content/70 mb-4">
+                                Uncheck a card to hide it from the dashboard. Takes effect immediately.
+                            </p>
+                            {#each cardTabOrder as tab}
+                                <div class="mb-4">
+                                    <p class="text-xs uppercase tracking-wide opacity-60 mb-2">{cardTabLabels[tab]}</p>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        {#each dashboardCards.filter((c) => c.tab === tab) as card (card.id)}
+                                            <label class="flex items-center gap-2">
+                                                <input
+                                                    type="checkbox"
+                                                    class="checkbox checkbox-sm"
+                                                    checked={!$hiddenCards.includes(card.id)}
+                                                    on:change={(e) => toggleCardVisibility(card.id, e.target.checked)}
+                                                />
+                                                <span class="text-sm">{card.title}</span>
+                                            </label>
+                                        {/each}
+                                    </div>
+                                </div>
+                            {/each}
+                        </div>
 
                         <form id="display-settings-form" class="space-y-6">
                             
