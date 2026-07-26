@@ -8,6 +8,11 @@
   import TabActivity from './components/TabActivity.svelte';
   import Footer from './components/Footer.svelte';
   import Settings from './components/Settings.svelte';
+  import HideableCard from './components/HideableCard.svelte';
+  import { dashboardCards } from './lib/dashboardCards';
+  import { hiddenCards } from './stores/hiddenCards';
+
+  $: hiddenCardEntries = dashboardCards.filter((c) => $hiddenCards.includes(c.id));
 
   let activeTab = 'activity';
   let tabsElement;
@@ -77,8 +82,29 @@
 </div>
 
 <div class="container max-w-8xl mx-auto p-8">
+  {#if hiddenCardEntries.length > 0}
+    <div class="flex justify-center mb-4">
+      <div class="dropdown dropdown-bottom">
+        <div tabindex="0" role="button" class="btn btn-sm btn-outline">
+          {hiddenCardEntries.length} hidden card{hiddenCardEntries.length === 1 ? '' : 's'}
+        </div>
+        <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-10 w-64 p-2 shadow">
+          {#each hiddenCardEntries as card (card.id)}
+            <li>
+              <button type="button" on:click={() => hiddenCards.show(card.id)}>
+                {card.title}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    </div>
+  {/if}
+
   <div class="grid grid-cols-1 mt-10 mb-15">
-    <AboveTimeline />
+    <HideableCard id="above_timeline" title="Above Me">
+      <AboveTimeline />
+    </HideableCard>
   </div>
 
   <!-- tabs -->
