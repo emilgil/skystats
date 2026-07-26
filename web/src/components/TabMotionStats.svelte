@@ -1,19 +1,14 @@
 <script>
-    import MotionFastestAircraft from './MotionFastestAircraft.svelte';
-    import MotionSlowestAircraft from './MotionSlowestAircraft.svelte';
-    import MotionHighestAircraft from './MotionHighestAircraft.svelte';
-    import MotionLowestAircraft from './MotionLowestAircraft.svelte';
-    import MotionFurthestFlownAircraft from './MotionFurthestFlownAircraft.svelte';
-    import MotionMostRemainingAircraft from './MotionMostRemainingAircraft.svelte';
-    import MotionLongestRouteAircraft from './MotionLongestRouteAircraft.svelte';
+    import HideableCard from './HideableCard.svelte';
+    import { dashboardCards } from '../lib/dashboardCards';
+
+    const cards = dashboardCards.filter((c) => c.tab === 'motion-stat');
 </script>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 mt-10 gap-6">
-    <MotionFastestAircraft />
-    <MotionSlowestAircraft />
-    <MotionHighestAircraft />
-    <MotionLowestAircraft />
-    <MotionFurthestFlownAircraft />
-    <MotionMostRemainingAircraft />
-    <MotionLongestRouteAircraft />
+    {#each cards as card (card.id)}
+        <HideableCard id={card.id} title={card.title}>
+            <svelte:component this={card.component} {...(card.props || {})} />
+        </HideableCard>
+    {/each}
 </div>
