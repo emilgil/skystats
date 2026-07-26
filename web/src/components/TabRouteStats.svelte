@@ -1,17 +1,14 @@
 <script>
-    import RouteTopAirlines from './RouteTopAirlines.svelte';
-    import RouteTopAirportsDomestic from './RouteTopAirportsDomestic.svelte';
-    import RouteTopAirportsInternational from './RouteTopAirportsInternational.svelte';
-    import RouteTopRoutes from './RouteTopRoutes.svelte';
-    import RouteTopCountriesOrigin from './RouteTopCountriesOrigin.svelte';
-    import RouteTopCountriesDestination from './RouteTopCountriesDestination.svelte';
+    import HideableCard from './HideableCard.svelte';
+    import { dashboardCards } from '../lib/dashboardCards';
 
+    const cards = dashboardCards.filter((c) => c.tab === 'route-stat');
 </script>
+
 <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 mt-10 gap-6">
-    <RouteTopAirlines />
-    <RouteTopAirportsDomestic  />
-    <RouteTopAirportsInternational />
-    <RouteTopRoutes />
-    <RouteTopCountriesOrigin />
-    <RouteTopCountriesDestination />
-  </div>
+    {#each cards as card (card.id)}
+        <HideableCard id={card.id} title={card.title}>
+            <svelte:component this={card.component} {...(card.props || {})} />
+        </HideableCard>
+    {/each}
+</div>
