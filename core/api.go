@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -92,13 +93,13 @@ func (s *APIServer) Start() {
 			stats.GET("/routes/airports-domestic", s.getTopDomesticAirports)
 			stats.GET("/routes/airports-international", s.getTopInternationalAirports)
 
-			stats.GET("/motion/fastest", s.getFastestAircraft)
-			stats.GET("/motion/slowest", s.getSlowestAircraft)
-			stats.GET("/motion/highest", s.getHighestAircraft)
-			stats.GET("/motion/lowest", s.getLowestAircraft)
-			stats.GET("/motion/furthest-flown", s.getFurthestFlownAircraft)
-			stats.GET("/motion/most-remaining", s.getMostRemainingAircraft)
-			stats.GET("/motion/longest-route", s.getLongestRouteAircraft)
+			stats.GET("/motion/fastest", func(c *gin.Context) { s.getRecords(c, "fastest") })
+			stats.GET("/motion/slowest", func(c *gin.Context) { s.getRecords(c, "slowest") })
+			stats.GET("/motion/highest", func(c *gin.Context) { s.getRecords(c, "highest") })
+			stats.GET("/motion/lowest", func(c *gin.Context) { s.getRecords(c, "lowest") })
+			stats.GET("/motion/furthest-flown", func(c *gin.Context) { s.getRecords(c, "furthest_flown") })
+			stats.GET("/motion/most-remaining", func(c *gin.Context) { s.getRecords(c, "most_remaining") })
+			stats.GET("/motion/longest-route", func(c *gin.Context) { s.getRecords(c, "longest_route") })
 
 			stats.GET("/interesting/metrics", s.getInterestingMetrics)
 			stats.GET("/interesting/civilian", func(c *gin.Context) { s.getRecentInterestingAircraft(c, "Civ") })
@@ -499,328 +500,72 @@ func (s *APIServer) getRecentInterestingAircraft(c *gin.Context, group string) {
 	c.JSON(http.StatusOK, aircraft)
 }
 
-func (s *APIServer) getFastestAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen, 
-			   ground_speed, indicated_air_speed, true_air_speed
-		FROM fastest_aircraft 
-		ORDER BY ground_speed DESC 
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+func (s *APIServer) getRecords(c *gin.Context, category string) {
+	meta, ok := recordCategories[category]
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unknown category"})
 		return
 	}
-	defer rows.Close()
 
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var groundSpeed float64
-		var indicatedAirSpeed, trueAirSpeed int
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &groundSpeed, &indicatedAirSpeed, &trueAirSpeed)
-		if err != nil {
-			continue
-		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                 hex,
-			"flight":              flight,
-			"registration":        registration,
-			"type":                aircraftType,
-			"first_seen":          firstSeen,
-			"last_seen":           lastSeen,
-			"ground_speed":        groundSpeed,
-			"indicated_air_speed": indicatedAirSpeed,
-			"true_air_speed":      trueAirSpeed,
-		})
-	}
-
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getSlowestAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen, 
-			   ground_speed, indicated_air_speed, true_air_speed
-		FROM slowest_aircraft 
-		ORDER BY ground_speed ASC 
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	period := c.DefaultQuery("period", "all_time")
+	if !isValidPeriodType(period) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid period"})
 		return
 	}
-	defer rows.Close()
 
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var groundSpeed float64
-		var indicatedAirSpeed, trueAirSpeed int
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &groundSpeed, &indicatedAirSpeed, &trueAirSpeed)
-		if err != nil {
-			continue
-		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                 hex,
-			"flight":              flight,
-			"registration":        registration,
-			"type":                aircraftType,
-			"first_seen":          firstSeen,
-			"last_seen":           lastSeen,
-			"ground_speed":        groundSpeed,
-			"indicated_air_speed": indicatedAirSpeed,
-			"true_air_speed":      trueAirSpeed,
-		})
-	}
-
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getHighestAircraft(c *gin.Context) {
 	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen, 
-			   barometric_altitude, geometric_altitude
-		FROM highest_aircraft 
-		ORDER BY barometric_altitude DESC 
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var barometricAltitude, geometricAltitude int
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &barometricAltitude, &geometricAltitude)
-		if err != nil {
-			continue
-		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                 hex,
-			"flight":              flight,
-			"registration":        registration,
-			"type":                aircraftType,
-			"first_seen":          firstSeen,
-			"last_seen":           lastSeen,
-			"barometric_altitude": barometricAltitude,
-			"geometric_altitude":  geometricAltitude,
-		})
+	if limit > 100 {
+		limit = 100
 	}
 
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getLowestAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen, 
-			   barometric_altitude, geometric_altitude
-		FROM lowest_aircraft 
-		ORDER BY barometric_altitude ASC 
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var barometricAltitude, geometricAltitude int
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &barometricAltitude, &geometricAltitude)
-		if err != nil {
-			continue
-		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                 hex,
-			"flight":              flight,
-			"registration":        registration,
-			"type":                aircraftType,
-			"first_seen":          firstSeen,
-			"last_seen":           lastSeen,
-			"barometric_altitude": barometricAltitude,
-			"geometric_altitude":  geometricAltitude,
-		})
-	}
-
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getFurthestFlownAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
+	query := fmt.Sprintf(`
 		SELECT hex, flight, registration, type, first_seen, last_seen,
-			   origin_icao_code, origin_iata_code,
-			   destination_icao_code, destination_iata_code, distance_flown
-		FROM furthest_flown_aircraft
-		ORDER BY distance_flown DESC
-		LIMIT $1`
+		       metric_value::float8, details
+		FROM records
+		WHERE category = $1 AND period_type = $2
+		ORDER BY metric_value %s, first_seen ASC
+		LIMIT $3`, meta.bestFirstSQL())
 
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
+	rows, err := s.pg.db.Query(context.Background(), query, category, period, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
 
-	aircraft := []gin.H{}
+	out := []gin.H{}
 	for rows.Next() {
 		var hex, flight, registration, aircraftType string
 		var firstSeen, lastSeen *time.Time
-		var originIcao, originIata, destinationIcao, destinationIata *string
-		var distanceFlown float64
+		var metricValue float64
+		var detailsRaw []byte
 
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &originIcao, &originIata, &destinationIcao, &destinationIata, &distanceFlown)
-		if err != nil {
+		if err := rows.Scan(&hex, &flight, &registration, &aircraftType,
+			&firstSeen, &lastSeen, &metricValue, &detailsRaw); err != nil {
 			continue
 		}
 
-		aircraft = append(aircraft, gin.H{
-			"hex":                   hex,
-			"flight":                flight,
-			"registration":          registration,
-			"type":                  aircraftType,
-			"first_seen":            firstSeen,
-			"last_seen":             lastSeen,
-			"origin_icao_code":      originIcao,
-			"origin_iata_code":      originIata,
-			"destination_icao_code": destinationIcao,
-			"destination_iata_code": destinationIata,
-			"distance_flown":        distanceFlown,
-		})
-	}
-
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getMostRemainingAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen,
-			   destination_icao_code, destination_iata_code, distance_remaining
-		FROM most_remaining_aircraft
-		ORDER BY distance_remaining DESC
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var destinationIcao, destinationIata *string
-		var distanceRemaining float64
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &destinationIcao, &destinationIata, &distanceRemaining)
-		if err != nil {
-			continue
+		row := gin.H{
+			"hex":           hex,
+			"flight":        flight,
+			"registration":  registration,
+			"type":          aircraftType,
+			"first_seen":    firstSeen,
+			"last_seen":     lastSeen,
+			meta.MetricName: metricValue,
 		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                   hex,
-			"flight":                flight,
-			"registration":          registration,
-			"type":                  aircraftType,
-			"first_seen":            firstSeen,
-			"last_seen":             lastSeen,
-			"destination_icao_code": destinationIcao,
-			"destination_iata_code": destinationIata,
-			"distance_remaining":    distanceRemaining,
-		})
-	}
-
-	c.JSON(http.StatusOK, aircraft)
-}
-
-func (s *APIServer) getLongestRouteAircraft(c *gin.Context) {
-	limit := s.getLimit("record_holder_table_limit")
-
-	query := `
-		SELECT hex, flight, registration, type, first_seen, last_seen,
-			   origin_icao_code, origin_iata_code,
-			   destination_icao_code, destination_iata_code, route_distance
-		FROM longest_route_aircraft
-		ORDER BY route_distance DESC
-		LIMIT $1`
-
-	rows, err := s.pg.db.Query(context.Background(), query, limit)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	aircraft := []gin.H{}
-	for rows.Next() {
-		var hex, flight, registration, aircraftType string
-		var firstSeen, lastSeen *time.Time
-		var originIcao, originIata, destinationIcao, destinationIata *string
-		var routeDistance float64
-
-		err := rows.Scan(&hex, &flight, &registration, &aircraftType, &firstSeen,
-			&lastSeen, &originIcao, &originIata, &destinationIcao, &destinationIata, &routeDistance)
-		if err != nil {
-			continue
+		if len(detailsRaw) > 0 {
+			var details map[string]any
+			if json.Unmarshal(detailsRaw, &details) == nil {
+				for k, v := range details {
+					row[k] = v
+				}
+			}
 		}
-
-		aircraft = append(aircraft, gin.H{
-			"hex":                   hex,
-			"flight":                flight,
-			"registration":          registration,
-			"type":                  aircraftType,
-			"first_seen":            firstSeen,
-			"last_seen":             lastSeen,
-			"origin_icao_code":      originIcao,
-			"origin_iata_code":      originIata,
-			"destination_icao_code": destinationIcao,
-			"destination_iata_code": destinationIata,
-			"route_distance":        routeDistance,
-		})
+		out = append(out, row)
 	}
 
-	c.JSON(http.StatusOK, aircraft)
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *APIServer) getTopAircraftTypes(c *gin.Context, period string, flightoraircraft string) {
