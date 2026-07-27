@@ -110,6 +110,13 @@ func main() {
 	updateInterestingSeenTicker := time.NewTicker(120 * time.Second)
 	updateDistanceStatisticsTicker := time.NewTicker(300 * time.Second)
 
+	sweepMinutes := getIntSetting(pg, "leaderboard_sweep_interval_minutes", 60)
+	if sweepMinutes <= 0 {
+		sweepMinutes = 60
+	}
+	leaderboardSweepTicker := time.NewTicker(time.Duration(sweepMinutes) * time.Minute)
+	historyRetentionTicker := time.NewTicker(24 * time.Hour)
+
 	// Welcome to skystats
 	if banner, err := os.ReadFile("../docs/logo/skystats_ascii.txt"); err == nil {
 		log.Info().Msg("\n" + string(banner))
@@ -128,6 +135,8 @@ func main() {
 		updateRoutesTicker.Stop()
 		updateInterestingSeenTicker.Stop()
 		updateDistanceStatisticsTicker.Stop()
+		leaderboardSweepTicker.Stop()
+		historyRetentionTicker.Stop()
 		pg.Close()
 	}()
 
@@ -151,6 +160,17 @@ func main() {
 		case <-updateDistanceStatisticsTicker.C:
 			log.Debug().Msg("Update Distance Statistics")
 			updateDistanceStatistics(pg)
+		case <-leaderboardSweepTicker.C:
+			log.Debug().Msg("Leaderboard sweep")
+			if newMinutes := getIntSetting(pg, "leaderboard_sweep_interval_minutes", 60); newMinutes > 0 && newMinutes != sweepMinutes {
+				sweepMinutes = newMinutes
+				leaderboardSweepTicker.Reset(time.Duration(sweepMinutes) * time.Minute)
+				log.Info().Msgf("Leaderboard sweep interval changed to %d min", sweepMinutes)
+			}
+			runLeaderboardSweep(pg)
+		case <-historyRetentionTicker.C:
+			log.Debug().Msg("History retention")
+			runHistoryRetention(pg)
 		}
 	}
 
