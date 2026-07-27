@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -103,188 +103,132 @@ func getAircraftsForDistanceStatistics(pg *postgres) (matched []Aircraft, unmatc
 }
 
 func updateFurthestFlownAircraft(pg *postgres, aircrafts []Aircraft) {
-
-	tableName := "furthest_flown_aircraft"
-	metricName := "distance_flown"
-
 	var toProcess []Aircraft
-	for _, aircraft := range aircrafts {
-		if !aircraft.FurthestFlownProcessed {
-			toProcess = append(toProcess, aircraft)
+	for _, a := range aircrafts {
+		if !a.FurthestFlownProcessed {
+			toProcess = append(toProcess, a)
 		}
 	}
 	if len(toProcess) == 0 {
 		return
 	}
 
-	batch := &pgx.Batch{}
-	var queued []Aircraft
-
-	for _, aircraft := range toProcess {
-		if !aircraft.OriginLat.Valid || !aircraft.OriginLon.Valid ||
-			!aircraft.LastSeenLat.Valid || !aircraft.LastSeenLon.Valid {
+	var candidates []recordCandidate
+	for _, a := range toProcess {
+		if !a.OriginLat.Valid || !a.OriginLon.Valid || !a.LastSeenLat.Valid || !a.LastSeenLon.Valid {
 			continue
 		}
-
 		distanceFlown := haversineDistanceKm(
-			aircraft.OriginLat.Float64, aircraft.OriginLon.Float64,
-			aircraft.LastSeenLat.Float64, aircraft.LastSeenLon.Float64)
+			a.OriginLat.Float64, a.OriginLon.Float64, a.LastSeenLat.Float64, a.LastSeenLon.Float64)
 
-		insertStatement := `
-			INSERT INTO furthest_flown_aircraft (
-				hex, flight, registration, type, first_seen, last_seen,
-				origin_icao_code, origin_iata_code,
-				destination_icao_code, destination_iata_code, distance_flown)
-			VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (hex, first_seen)
-			DO UPDATE SET
-				distance_flown = EXCLUDED.distance_flown,
-				last_seen = EXCLUDED.last_seen`
-
-		batch.Queue(insertStatement,
-			aircraft.Hex, aircraft.Flight, aircraft.R, aircraft.T,
-			aircraft.FirstSeen, aircraft.LastSeen,
-			aircraft.OriginIcaoCode, aircraft.OriginIataCode,
-			aircraft.DestinationIcaoCode, aircraft.DestinationIataCode,
-			distanceFlown)
-
-		queued = append(queued, aircraft)
+		upsertFlightHistory(pg, a.Hex, a.Flight, a.R, a.T, a.FirstSeen, a.LastSeen, map[string]any{
+			"distance_flown":        distanceFlown,
+			"origin_icao_code":      nullStr(a.OriginIcaoCode),
+			"origin_iata_code":      nullStr(a.OriginIataCode),
+			"destination_icao_code": nullStr(a.DestinationIcaoCode),
+			"destination_iata_code": nullStr(a.DestinationIataCode),
+		})
+		candidates = append(candidates, recordCandidate{
+			Hex: a.Hex, Flight: a.Flight, Registration: a.R, Type: a.T,
+			FirstSeen: a.FirstSeen, LastSeen: a.LastSeen,
+			MetricValue: distanceFlown,
+			Details: map[string]any{
+				"origin_icao_code":      nullStr(a.OriginIcaoCode),
+				"origin_iata_code":      nullStr(a.OriginIataCode),
+				"destination_icao_code": nullStr(a.DestinationIcaoCode),
+				"destination_iata_code": nullStr(a.DestinationIataCode),
+			},
+		})
 	}
-
-	br := pg.db.SendBatch(context.Background(), batch)
-	defer br.Close()
-	for i := 0; i < len(queued); i++ {
-		if _, err := br.Exec(); err != nil {
-			log.Error().Err(err).Msg("updateFurthestFlownAircraft() - Unable to insert data")
-		}
-	}
-
-	// "ASC" here means: delete the LOWEST distance_flown rows first, keeping
-	// the highest — because this leaderboard wants to keep the maximum.
-	DeleteExcessRows(pg, tableName, metricName, "ASC", 50)
+	writeRecords(pg, "furthest_flown", candidates)
 	MarkProcessed(pg, "furthest_flown_processed", toProcess)
 }
 
 func updateMostRemainingAircraft(pg *postgres, aircrafts []Aircraft) {
-
-	tableName := "most_remaining_aircraft"
-	metricName := "distance_remaining"
-
 	var toProcess []Aircraft
-	for _, aircraft := range aircrafts {
-		if !aircraft.MostRemainingProcessed {
-			toProcess = append(toProcess, aircraft)
+	for _, a := range aircrafts {
+		if !a.MostRemainingProcessed {
+			toProcess = append(toProcess, a)
 		}
 	}
 	if len(toProcess) == 0 {
 		return
 	}
 
-	batch := &pgx.Batch{}
-	var queued []Aircraft
-
-	for _, aircraft := range toProcess {
-		// Only the destination is required for "remaining distance".
-		if !aircraft.DestinationLat.Valid || !aircraft.DestinationLon.Valid ||
-			!aircraft.LastSeenLat.Valid || !aircraft.LastSeenLon.Valid {
+	var candidates []recordCandidate
+	for _, a := range toProcess {
+		if !a.DestinationLat.Valid || !a.DestinationLon.Valid || !a.LastSeenLat.Valid || !a.LastSeenLon.Valid {
 			continue
 		}
-
 		distanceRemaining := haversineDistanceKm(
-			aircraft.LastSeenLat.Float64, aircraft.LastSeenLon.Float64,
-			aircraft.DestinationLat.Float64, aircraft.DestinationLon.Float64)
+			a.LastSeenLat.Float64, a.LastSeenLon.Float64, a.DestinationLat.Float64, a.DestinationLon.Float64)
 
-		insertStatement := `
-			INSERT INTO most_remaining_aircraft (
-				hex, flight, registration, type, first_seen, last_seen,
-				destination_icao_code, destination_iata_code, distance_remaining)
-			VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9)
-			ON CONFLICT (hex, first_seen)
-			DO UPDATE SET
-				distance_remaining = EXCLUDED.distance_remaining,
-				last_seen = EXCLUDED.last_seen`
-
-		batch.Queue(insertStatement,
-			aircraft.Hex, aircraft.Flight, aircraft.R, aircraft.T,
-			aircraft.FirstSeen, aircraft.LastSeen,
-			aircraft.DestinationIcaoCode, aircraft.DestinationIataCode,
-			distanceRemaining)
-
-		queued = append(queued, aircraft)
+		upsertFlightHistory(pg, a.Hex, a.Flight, a.R, a.T, a.FirstSeen, a.LastSeen, map[string]any{
+			"distance_remaining":    distanceRemaining,
+			"destination_icao_code": nullStr(a.DestinationIcaoCode),
+			"destination_iata_code": nullStr(a.DestinationIataCode),
+		})
+		candidates = append(candidates, recordCandidate{
+			Hex: a.Hex, Flight: a.Flight, Registration: a.R, Type: a.T,
+			FirstSeen: a.FirstSeen, LastSeen: a.LastSeen,
+			MetricValue: distanceRemaining,
+			Details: map[string]any{
+				"destination_icao_code": nullStr(a.DestinationIcaoCode),
+				"destination_iata_code": nullStr(a.DestinationIataCode),
+			},
+		})
 	}
-
-	br := pg.db.SendBatch(context.Background(), batch)
-	defer br.Close()
-	for i := 0; i < len(queued); i++ {
-		if _, err := br.Exec(); err != nil {
-			log.Error().Err(err).Msg("updateMostRemainingAircraft() - Unable to insert data")
-		}
-	}
-
-	DeleteExcessRows(pg, tableName, metricName, "ASC", 50)
+	writeRecords(pg, "most_remaining", candidates)
 	MarkProcessed(pg, "most_remaining_processed", toProcess)
 }
 
 func updateLongestRouteAircraft(pg *postgres, aircrafts []Aircraft) {
-
-	tableName := "longest_route_aircraft"
-	metricName := "route_distance"
-
 	var toProcess []Aircraft
-	for _, aircraft := range aircrafts {
-		if !aircraft.LongestRouteProcessed {
-			toProcess = append(toProcess, aircraft)
+	for _, a := range aircrafts {
+		if !a.LongestRouteProcessed {
+			toProcess = append(toProcess, a)
 		}
 	}
 	if len(toProcess) == 0 {
 		return
 	}
 
-	batch := &pgx.Batch{}
-	var queued []Aircraft
-
-	for _, aircraft := range toProcess {
-		if !aircraft.OriginLat.Valid || !aircraft.OriginLon.Valid ||
-			!aircraft.DestinationLat.Valid || !aircraft.DestinationLon.Valid {
+	var candidates []recordCandidate
+	for _, a := range toProcess {
+		if !a.OriginLat.Valid || !a.OriginLon.Valid || !a.DestinationLat.Valid || !a.DestinationLon.Valid {
 			continue
 		}
-
 		routeDistance := haversineDistanceKm(
-			aircraft.OriginLat.Float64, aircraft.OriginLon.Float64,
-			aircraft.DestinationLat.Float64, aircraft.DestinationLon.Float64)
+			a.OriginLat.Float64, a.OriginLon.Float64, a.DestinationLat.Float64, a.DestinationLon.Float64)
 
-		insertStatement := `
-			INSERT INTO longest_route_aircraft (
-				hex, flight, registration, type, first_seen, last_seen,
-				origin_icao_code, origin_iata_code,
-				destination_icao_code, destination_iata_code, route_distance)
-			VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (hex, first_seen)
-			DO UPDATE SET
-				route_distance = EXCLUDED.route_distance,
-				last_seen = EXCLUDED.last_seen`
-
-		batch.Queue(insertStatement,
-			aircraft.Hex, aircraft.Flight, aircraft.R, aircraft.T,
-			aircraft.FirstSeen, aircraft.LastSeen,
-			aircraft.OriginIcaoCode, aircraft.OriginIataCode,
-			aircraft.DestinationIcaoCode, aircraft.DestinationIataCode,
-			routeDistance)
-
-		queued = append(queued, aircraft)
+		upsertFlightHistory(pg, a.Hex, a.Flight, a.R, a.T, a.FirstSeen, a.LastSeen, map[string]any{
+			"route_distance":        routeDistance,
+			"origin_icao_code":      nullStr(a.OriginIcaoCode),
+			"origin_iata_code":      nullStr(a.OriginIataCode),
+			"destination_icao_code": nullStr(a.DestinationIcaoCode),
+			"destination_iata_code": nullStr(a.DestinationIataCode),
+		})
+		candidates = append(candidates, recordCandidate{
+			Hex: a.Hex, Flight: a.Flight, Registration: a.R, Type: a.T,
+			FirstSeen: a.FirstSeen, LastSeen: a.LastSeen,
+			MetricValue: routeDistance,
+			Details: map[string]any{
+				"origin_icao_code":      nullStr(a.OriginIcaoCode),
+				"origin_iata_code":      nullStr(a.OriginIataCode),
+				"destination_icao_code": nullStr(a.DestinationIcaoCode),
+				"destination_iata_code": nullStr(a.DestinationIataCode),
+			},
+		})
 	}
-
-	br := pg.db.SendBatch(context.Background(), batch)
-	defer br.Close()
-	for i := 0; i < len(queued); i++ {
-		if _, err := br.Exec(); err != nil {
-			log.Error().Err(err).Msg("updateLongestRouteAircraft() - Unable to insert data")
-		}
-	}
-
-	DeleteExcessRows(pg, tableName, metricName, "ASC", 50)
+	writeRecords(pg, "longest_route", candidates)
 	MarkProcessed(pg, "longest_route_processed", toProcess)
+}
+
+// nullStr unwraps a sql.NullString to a *string so it JSON-marshals as null
+// (not "") when absent, matching migration 000012's bootstrap details.
+func nullStr(ns sql.NullString) any {
+	if ns.Valid {
+		return ns.String
+	}
+	return nil
 }
