@@ -12,20 +12,27 @@
     let loading = true;
     let error = null;
 
-    async function fetchData() {
+    let requestSeq = 0;
 
+    async function fetchData() {
+        const seq = ++requestSeq;
+        loading = true;
         try {
             const response = await fetch(buildRecordUrl(endpoint, $recordPeriod));
             if (!response.ok) {
                 throw new Error(`${response.status}`);
             }
             const result = await response.json();
+            if (seq !== requestSeq) return; // superseded by a newer request
             data = result;
             error = null;
         } catch (err) {
+            if (seq !== requestSeq) return;
             error = err.message;
         } finally {
-            loading = false;
+            if (seq === requestSeq) {
+                loading = false;
+            }
         }
     }
 
