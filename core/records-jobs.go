@@ -47,6 +47,9 @@ func runLeaderboardSweep(pg *postgres) {
 // purged regardless of age.
 func runHistoryRetention(pg *postgres) {
 	days := getIntSetting(pg, "history_retention_days", 730)
+	if days <= 0 {
+		days = 730
+	}
 	cutoff := time.Now().AddDate(0, 0, -days)
 	ct, err := pg.db.Exec(context.Background(), `
 		DELETE FROM flight_history fh

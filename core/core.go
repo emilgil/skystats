@@ -111,6 +111,9 @@ func main() {
 	updateDistanceStatisticsTicker := time.NewTicker(300 * time.Second)
 
 	sweepMinutes := getIntSetting(pg, "leaderboard_sweep_interval_minutes", 60)
+	if sweepMinutes <= 0 {
+		sweepMinutes = 60
+	}
 	leaderboardSweepTicker := time.NewTicker(time.Duration(sweepMinutes) * time.Minute)
 	historyRetentionTicker := time.NewTicker(24 * time.Hour)
 
