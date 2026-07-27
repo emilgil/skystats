@@ -1,7 +1,7 @@
 <script>
 // @ts-nocheck
-    import { onMount } from 'svelte';
     import { refreshRecordHolderData } from '../stores/settings';
+    import { recordPeriod, buildRecordUrl } from '../stores/recordPeriod';
 
     export let endpoint;
     export let title;
@@ -15,7 +15,7 @@
     async function fetchData() {
 
         try {
-            const response = await fetch(endpoint);
+            const response = await fetch(buildRecordUrl(endpoint, $recordPeriod));
             if (!response.ok) {
                 throw new Error(`${response.status}`);
             }
@@ -29,9 +29,11 @@
         }
     }
 
-    onMount(() => {
+    // Fetch on mount and whenever the selected period changes.
+    $: if (endpoint) {
+        $recordPeriod;
         fetchData();
-    })
+    }
 
     // Refresh when settings change
     $: if ($refreshRecordHolderData) {
