@@ -4,6 +4,7 @@
 
     const columns = [
         { header: 'Reg', field: 'registration', class: 'font-mono' },
+        { header: 'Airline', field: 'airline_name', formatter: (value) => value || '-' },
         { header: 'Model', field: 'type' },
         // { header: 'Flight', field: 'flight' },
         { 
