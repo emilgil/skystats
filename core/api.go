@@ -519,11 +519,12 @@ func (s *APIServer) getRecords(c *gin.Context, category string) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT hex, flight, registration, type, first_seen, last_seen,
-		       metric_value::float8, details
-		FROM records
-		WHERE category = $1 AND period_type = $2
-		ORDER BY metric_value %s, first_seen ASC
+		SELECT r.hex, r.flight, r.registration, r.type, r.first_seen, r.last_seen,
+		       r.metric_value::float8, r.details, rt.airline_name
+		FROM records r
+		LEFT JOIN route_data rt ON r.flight = rt.route_callsign
+		WHERE r.category = $1 AND r.period_type = $2
+		ORDER BY r.metric_value %s, r.first_seen ASC
 		LIMIT $3`, meta.bestFirstSQL())
 
 	rows, err := s.pg.db.Query(context.Background(), query, category, period, limit)
@@ -539,9 +540,10 @@ func (s *APIServer) getRecords(c *gin.Context, category string) {
 		var firstSeen, lastSeen *time.Time
 		var metricValue float64
 		var detailsRaw []byte
+		var airlineName *string
 
 		if err := rows.Scan(&hex, &flight, &registration, &aircraftType,
-			&firstSeen, &lastSeen, &metricValue, &detailsRaw); err != nil {
+			&firstSeen, &lastSeen, &metricValue, &detailsRaw, &airlineName); err != nil {
 			continue
 		}
 
@@ -552,6 +554,7 @@ func (s *APIServer) getRecords(c *gin.Context, category string) {
 			"type":          aircraftType,
 			"first_seen":    firstSeen,
 			"last_seen":     lastSeen,
+			"airline_name":  airlineName,
 			meta.MetricName: metricValue,
 		}
 		if len(detailsRaw) > 0 {
