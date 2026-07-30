@@ -13,9 +13,11 @@ import (
 )
 
 // CurrentSighting is one row of the Current Sightings table: an aircraft the
-// receiver can see right now. Live values come from the readsb snapshot; the
-// optional fields are joined in from Postgres and stay nil until the
-// registration and route enrichment jobs have caught up with the aircraft.
+// receiver can see right now. Live values come from the readsb snapshot.
+// TypeDescription also comes straight from the readsb feed (its desc field)
+// and has no database fallback. The remaining optional fields are joined in
+// from Postgres and stay nil until the registration and route enrichment jobs
+// have caught up with the aircraft.
 type CurrentSighting struct {
 	Hex              string    `json:"hex"`
 	Flight           string    `json:"flight"`
@@ -217,7 +219,19 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 // snapshot the ingest ticker just processed.
 func refreshCurrentSightings(pg *postgres, nowEpoch float64, aircraft []Aircraft) {
 
-	generatedAt := time.Unix(int64(nowEpoch), 0)
+	// A non-JSON readsb response (e.g. an HTML error page) leaves nowEpoch at
+	// its zero value, since json.Unmarshal's error is discarded upstream. Bail
+	// out rather than stamping the store with a 1970 timestamp and wiping the
+	// aircraft list — let it age like any other outage instead.
+	if nowEpoch == 0 {
+		return
+	}
+
+	// Use the local clock rather than readsb's nowEpoch: the frontend compares
+	// generatedAt against the viewer's Date.now(), so deriving it from the
+	// feeder's (potentially unsynced) clock would make staleness detection
+	// unreliable.
+	generatedAt := time.Now()
 
 	if len(aircraft) == 0 {
 		currentSightings.replace([]CurrentSighting{}, generatedAt)

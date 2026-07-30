@@ -114,9 +114,12 @@ LEFT JOIN LATERAL (SELECT "group" FROM interesting_aircraft
 ```
 
 `LATERAL ... LIMIT 1` i stället för rak `LEFT JOIN` för route och interesting:
-dagens `getAboveStats` gör en rak join mot `route_data`, vilket tyst dubblerar
-raden om samma callsign finns flera gånger. Med `LIMIT 5` märks det inte; i en
-tabell utan radtak skulle det ge synliga dubbletter.
+det här är defensivt snarare än nödvändigt. `route_data.route_callsign` har en
+UNIQUE-constraint (`route_callsign_unique`, migration 000001) och
+`interesting_aircraft.icao` är unikt sedan migration 000002
+(`interesting_aircraft_icao_unique`), så en rak `LEFT JOIN` kan inte dubblera
+raden här. `LATERAL ... LIMIT 1` kostar inget extra och fungerar som ett
+skyddsnät om unikheten någon gång skulle upphöra att gälla.
 
 **Avstånd** beräknas med samma `getDistance()` som ingesten, så kolumnen är
 konsekvent med `last_seen_distance` i övriga vyer. Listan sorteras stigande på
