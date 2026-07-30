@@ -6,7 +6,8 @@
     let data = null;
     let loading = false;
     let error = null;
-    let planespotters = null; // client-side fallback photo
+    let planespotters = null; // client-side photo (preferred over adsbdb)
+    let adsbdbImgFailed = false; // adsbdb photo URL failed to load (frequent 404s)
     let requestSeq = 0;
 
     $: disableTags = $settings['disable_planealertdb_tags']?.setting_value === 'true';
@@ -17,6 +18,7 @@
         error = null;
         data = null;
         planespotters = null;
+        adsbdbImgFailed = false;
         const dialog = document.getElementById('aircraft-detail-modal');
         if (dialog && !dialog.open) {
             dialog.showModal();
@@ -28,7 +30,8 @@
             if (seq !== requestSeq) return; // superseded by a newer open
             data = result;
             const hasInterestingImages = data.interesting?.images?.length > 0;
-            if (!hasInterestingImages && !data.photo) {
+            // Prefer planespotters over the frequently-dead adsbdb (airport-data.com) photo.
+            if (!hasInterestingImages) {
                 const ps = await fetchPlanespotters(hex);
                 if (seq !== requestSeq) return;
                 planespotters = ps;
@@ -63,6 +66,7 @@
         data = null;
         error = null;
         planespotters = null;
+        adsbdbImgFailed = false;
         loading = false;
     }
 
@@ -125,8 +129,6 @@
                         <img src={img} alt="{data.registration} photo" class="w-full h-auto rounded-lg" />
                     {/each}
                 </div>
-            {:else if data.photo}
-                <img src={data.photo.url || data.photo.thumbnail} alt="{data.registration} photo" class="w-full h-auto rounded-lg" />
             {:else if planespotters}
                 <div>
                     <img src={planespotters.url} alt="{data.registration} photo" class="w-full h-auto rounded-lg" />
@@ -137,6 +139,8 @@
                         </p>
                     {/if}
                 </div>
+            {:else if data.photo && !adsbdbImgFailed}
+                <img src={data.photo.url || data.photo.thumbnail} alt="{data.registration} photo" class="w-full h-auto rounded-lg" on:error={() => adsbdbImgFailed = true} />
             {:else}
                 <p class="text-center text-gray-500 py-8">No photo available</p>
             {/if}
