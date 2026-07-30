@@ -1,4 +1,5 @@
 import AboveTimeline from '../components/AboveTimeline.svelte';
+import CurrentSightings from '../components/CurrentSightings.svelte';
 
 import MetricFlightsSeen from '../components/MetricFlightsSeen.svelte';
 import MetricAircraftSeen from '../components/MetricAircraftSeen.svelte';
@@ -28,6 +29,7 @@ import MotionLongestRouteAircraft from '../components/MotionLongestRouteAircraft
 
 export const dashboardCards = [
     { id: 'above_timeline', title: 'Above Me', tab: 'global', component: AboveTimeline },
+    { id: 'current_sightings', title: 'Current Sightings', tab: 'current-stat', component: CurrentSightings },
 
     { id: 'metric_flights_seen', title: 'Flights Seen', tab: 'activity', component: MetricFlightsSeen },
     { id: 'metric_aircraft_seen', title: 'Aircraft Seen', tab: 'activity', component: MetricAircraftSeen },

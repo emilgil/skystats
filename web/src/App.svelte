@@ -6,15 +6,17 @@
   import TabMotionStats from './components/TabMotionStats.svelte';
   import TabInterestingStats from './components/TabInterestingStats.svelte';
   import TabActivity from './components/TabActivity.svelte';
+  import TabCurrentSightings from './components/TabCurrentSightings.svelte';
   import Footer from './components/Footer.svelte';
   import Settings from './components/Settings.svelte';
   import HideableCard from './components/HideableCard.svelte';
   import AircraftModal from './components/AircraftModal.svelte';
 
-  let activeTab = 'activity';
+  let activeTab = 'current-stat';
   let tabsElement;
 
   const tabs = [
+    { name: 'current-stat', label: 'Current Sightings', component: TabCurrentSightings },
     { name: 'activity', label: 'Activity', component: TabActivity },
     { name: 'route-stat', label: 'Route Information', component: TabRouteStats },
     { name: 'interesting-stat', label: 'Interesting Aircraft', component: TabInterestingStats },

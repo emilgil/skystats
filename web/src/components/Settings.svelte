@@ -6,12 +6,13 @@
 
     const cardTabLabels = {
         global: 'Always Visible',
+        'current-stat': 'Current Sightings',
         activity: 'Activity',
         'route-stat': 'Route Information',
         'interesting-stat': 'Interesting Aircraft',
         'motion-stat': 'Record Holders'
     };
-    const cardTabOrder = ['global', 'activity', 'route-stat', 'interesting-stat', 'motion-stat'];
+    const cardTabOrder = ['global', 'current-stat', 'activity', 'route-stat', 'interesting-stat', 'motion-stat'];
 
     function toggleCardVisibility(cardId, visible) {
         if (visible) {
