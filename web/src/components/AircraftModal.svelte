@@ -1,12 +1,15 @@
 <script>
 // @ts-nocheck
     import { selectedHex, closeAircraftModal } from '../stores/aircraftModal';
+    import { settings } from '../stores/settings';
 
     let data = null;
     let loading = false;
     let error = null;
     let planespotters = null; // client-side fallback photo
     let requestSeq = 0;
+
+    $: disableTags = $settings['disable_planealertdb_tags']?.setting_value === 'true';
 
     async function load(hex) {
         const seq = ++requestSeq;
@@ -84,7 +87,7 @@
                 <h3 class="text-lg font-bold">
                     {data.registration || data.hex}{#if data.type} - {data.type}{/if}
                 </h3>
-                {#if data.interesting?.tags?.length}
+                {#if !disableTags && data.interesting?.tags?.length}
                     <div class="flex gap-2">
                         {#each data.interesting.tags as tag}
                             <div class="badge badge-accent text-white">{tag}</div>
@@ -130,7 +133,7 @@
                     {#if planespotters.photographer}
                         <p class="text-xs text-gray-500 mt-1">
                             &copy; {planespotters.photographer}
-                            {#if planespotters.link} &middot; <a class="link" href={planespotters.link} target="_blank" rel="noopener">planespotters.net</a>{/if}
+                            {#if planespotters.link} &middot; <a class="link" href={planespotters.link} target="_blank" rel="noopener noreferrer">planespotters.net</a>{/if}
                         </p>
                     {/if}
                 </div>
