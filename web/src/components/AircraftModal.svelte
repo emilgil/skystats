@@ -17,7 +17,7 @@
         error = null;
         data = null;
         planespotters = null;
-        const dialog = document.getElementById('aircraft-modal');
+        const dialog = document.getElementById('aircraft-detail-modal');
         if (dialog && !dialog.open) {
             dialog.showModal();
         }
@@ -72,7 +72,7 @@
     }
 </script>
 
-<dialog id="aircraft-modal" class="modal" on:close={onClose}>
+<dialog id="aircraft-detail-modal" class="modal" on:close={onClose}>
     <div class="modal-box max-w-3xl">
         {#if loading}
             <div class="flex justify-center py-8">
