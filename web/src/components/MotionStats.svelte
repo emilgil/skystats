@@ -2,6 +2,7 @@
 // @ts-nocheck
     import { refreshRecordHolderData } from '../stores/settings';
     import { recordPeriod, buildRecordUrl } from '../stores/recordPeriod';
+    import { openAircraftModal } from '../stores/aircraftModal';
 
     export let endpoint;
     export let title;
@@ -87,7 +88,7 @@
                         </thead>
                         <tbody>
                             {#each data as aircraft}
-                            <tr>
+                            <tr class="cursor-pointer hover:bg-base-300" on:click={() => openAircraftModal(aircraft.hex)}>
                                 {#each columns as column}
                                     <td class={column.class || ''}>
                                         {#if column.formatter}

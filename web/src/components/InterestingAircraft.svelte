@@ -1,21 +1,20 @@
 <script>
     import { onMount } from 'svelte'
-    import { settings, refreshInterestingData } from '../stores/settings';
+    import { refreshInterestingData } from '../stores/settings';
+    import { openAircraftModal } from '../stores/aircraftModal';
 
     export let endpoint;
     export let title;
     export let icon;
-    export let aircraftType;
+    // Still passed by the parent Interesting{Mil,Gov,Pol,Civ}Aircraft components;
+    // no longer used internally now that the local dialog is gone. `export const`
+    // (rather than `export let`) avoids an "unused export property" build warning
+    // without changing the prop contract for those parents.
+    export const aircraftType = undefined;
 
     let data = [];
     let loading = true;
     let error = null;
-    let selectedAircraft = null;
-    let imageLoadingStates = {
-        image1: true,
-        image2: true,
-        image3: true
-    };
 
     async function fetchData() {
         
@@ -34,21 +33,6 @@
         }
     }
 
-    function showAircraftModal(aircraft) {
-        selectedAircraft = aircraft;
-        imageLoadingStates = {
-            image1: true,
-            image2: true,
-            image3: true
-        };
-        // @ts-ignore
-        document.getElementById(aircraftType).showModal();
-    }
-
-    function closeModal() {
-        selectedAircraft = null;
-    }
-
     onMount(() => {
         fetchData();
     })
@@ -57,9 +41,6 @@
     $: if ($refreshInterestingData) {
         fetchData();
     }
-
-    $: disableTags = $settings['disable_planealertdb_tags']?.setting_value === 'true';
-
 </script>
 
 <div>
@@ -102,7 +83,7 @@
                         </thead>
                         <tbody>
                             {#each data as aircraft}
-                            <tr class="hover:bg-base-300 cursor-pointer" on:click={() => showAircraftModal(aircraft)}>
+                            <tr class="hover:bg-base-300 cursor-pointer" on:click={() => openAircraftModal(aircraft.hex)}>
                                 <td class="font-mono whitespace-nowrap">{aircraft.registration}</td>
                                 <td>{aircraft.operator}</td>
                                 <td>{aircraft.type}</td>
@@ -116,83 +97,3 @@
         </div>
     </div>
 </div>
-
-<!--modal-->
-<dialog id={aircraftType} class="modal" on:close={closeModal}>
-    <div class="modal-box max-w-4xl">
-        {#if selectedAircraft}
-            <div class="flex items-center justify-between mb-2">
-                <h3 class="text-lg font-bold">{selectedAircraft.registration} - {selectedAircraft.type}</h3>
-                {#if disableTags === false}
-                    <div class="flex gap-2">
-                        {#if selectedAircraft.tag1}
-                            <div class="badge badge-accent text-white">{selectedAircraft.tag1}</div>
-                        {/if}
-                        {#if selectedAircraft.tag2}
-                            <div class="badge badge-accent text-white">{selectedAircraft.tag2}</div>
-                        {/if}
-                        {#if selectedAircraft.tag3}
-                            <div class="badge badge-accent text-white">{selectedAircraft.tag3}</div>
-                        {/if}
-                    </div>
-                {/if}
-            </div>
-            <p class="text-sm text-gray-600 mb-4">{selectedAircraft.operator} {#if selectedAircraft.flight} - {selectedAircraft.flight} {/if}</p>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {#if selectedAircraft.image_link_1}
-                    <div class="relative">
-                        {#if imageLoadingStates.image1}
-                            <div class="skeleton h-48 w-full rounded-lg"></div>
-                        {/if}
-                        <img 
-                            src={selectedAircraft.image_link_1} 
-                            alt="{selectedAircraft.registration} photo 1" 
-                            class="w-full h-auto rounded-lg {imageLoadingStates.image1 ? 'absolute inset-0 opacity-0' : ''}"
-                            on:load={() => imageLoadingStates.image1 = false}
-                            on:error={() => imageLoadingStates.image1 = false}
-                        />
-                    </div>
-                {/if}
-                {#if selectedAircraft.image_link_2}
-                    <div class="relative">
-                        {#if imageLoadingStates.image2}
-                            <div class="skeleton h-48 w-full rounded-lg"></div>
-                        {/if}
-                        <img 
-                            src={selectedAircraft.image_link_2} 
-                            alt="{selectedAircraft.registration} photo 2" 
-                            class="w-full h-auto rounded-lg {imageLoadingStates.image2 ? 'absolute inset-0 opacity-0' : ''}"
-                            on:load={() => imageLoadingStates.image2 = false}
-                            on:error={() => imageLoadingStates.image2 = false}
-                        />
-                    </div>
-                {/if}
-                {#if selectedAircraft.image_link_3}
-                    <div class="relative">
-                        {#if imageLoadingStates.image3}
-                            <div class="skeleton h-48 w-full rounded-lg"></div>
-                        {/if}
-                        <img 
-                            src={selectedAircraft.image_link_3} 
-                            alt="{selectedAircraft.registration} photo 3" 
-                            class="w-full h-auto rounded-lg {imageLoadingStates.image3 ? 'absolute inset-0 opacity-0' : ''}"
-                            on:load={() => imageLoadingStates.image3 = false}
-                            on:error={() => imageLoadingStates.image3 = false}
-                        />
-                    </div>
-                {/if}
-            </div>
-            {#if !selectedAircraft.image_link_1 && !selectedAircraft.image_link_2 && !selectedAircraft.image_link_3}
-                <p class="text-center text-gray-500 py-8">No photos available for this aircraft</p>
-            {/if}
-        {/if}
-        <div class="modal-action">
-            <form method="dialog">
-                <button class="btn">Close</button>
-            </form>
-        </div>
-    </div>
-    <form method="dialog" class="modal-backdrop">
-        <button>close</button>
-    </form>
-</dialog>
