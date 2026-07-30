@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"math"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // CurrentSighting is one row of the Current Sightings table: an aircraft the
@@ -140,4 +143,103 @@ func (s *currentSightingsStore) snapshot() ([]CurrentSighting, time.Time) {
 	aircraft := make([]CurrentSighting, len(s.aircraft))
 	copy(aircraft, s.aircraft)
 	return aircraft, s.generatedAt
+}
+
+// fetchAircraftEnrichment looks up the slower-moving details for a whole
+// snapshot in one round trip, keyed by hex.
+func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (map[string]aircraftEnrichment, error) {
+
+	query := `
+		SELECT s.hex,
+		       reg.registration,
+		       reg.icao_type,
+		       reg.registered_owner,
+		       rt.airline_name,
+		       rt.origin_iata_code,
+		       rt.origin_name,
+		       rt.destination_iata_code,
+		       rt.destination_name,
+		       ia."group"
+		FROM unnest($1::text[], $2::text[]) AS s(hex, flight)
+		LEFT JOIN registration_data reg ON reg.mode_s = s.hex
+		LEFT JOIN LATERAL (
+			SELECT airline_name, origin_iata_code, origin_name,
+			       destination_iata_code, destination_name
+			FROM route_data
+			WHERE route_callsign = s.flight
+			LIMIT 1
+		) rt ON true
+		LEFT JOIN LATERAL (
+			SELECT "group"
+			FROM interesting_aircraft
+			WHERE icao = UPPER(s.hex)
+			LIMIT 1
+		) ia ON true`
+
+	rows, err := pg.db.Query(context.Background(), query, hexes, flights)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	enrichment := make(map[string]aircraftEnrichment, len(hexes))
+
+	for rows.Next() {
+		var hex string
+		var e aircraftEnrichment
+
+		err := rows.Scan(
+			&hex,
+			&e.Registration,
+			&e.IcaoType,
+			&e.RegisteredOwner,
+			&e.AirlineName,
+			&e.OriginIata,
+			&e.OriginName,
+			&e.DestinationIata,
+			&e.DestinationName,
+			&e.InterestingGroup,
+		)
+		if err != nil {
+			log.Error().Err(err).Msg("fetchAircraftEnrichment() - error scanning rows")
+			continue
+		}
+
+		enrichment[hex] = e
+	}
+
+	return enrichment, rows.Err()
+}
+
+// refreshCurrentSightings rebuilds the Current Sightings payload from the
+// snapshot the ingest ticker just processed.
+func refreshCurrentSightings(pg *postgres, nowEpoch float64, aircraft []Aircraft) {
+
+	generatedAt := time.Unix(int64(nowEpoch), 0)
+
+	if len(aircraft) == 0 {
+		currentSightings.replace([]CurrentSighting{}, generatedAt)
+		return
+	}
+
+	hexes := make([]string, 0, len(aircraft))
+	flights := make([]string, 0, len(aircraft))
+	for _, a := range aircraft {
+		hexes = append(hexes, a.Hex)
+		flights = append(flights, a.Flight)
+	}
+
+	enrichment, err := fetchAircraftEnrichment(pg, hexes, flights)
+	if err != nil {
+		// Serve the live rows without enrichment rather than freezing the
+		// table on stale data.
+		log.Error().Err(err).Msg("refreshCurrentSightings() - unable to fetch enrichment")
+		enrichment = map[string]aircraftEnrichment{}
+	}
+
+	sightings := buildCurrentSightings(aircraft, enrichment, nowEpoch, func(lat, lon float64) float64 {
+		return *getDistance([]float64{lon, lat})
+	})
+
+	currentSightings.replace(sightings, generatedAt)
 }

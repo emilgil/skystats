@@ -52,6 +52,7 @@ func updateAircraftDatabase(pg *postgres) {
 
 	}
 	pg.updateDatabase(response.Now, aircraftsInRange)
+	refreshCurrentSightings(pg, response.Now, aircraftsInRange)
 }
 
 func isNonAircraft(aircraft Aircraft) bool {
