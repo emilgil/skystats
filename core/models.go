@@ -18,6 +18,7 @@ type Aircraft struct {
 	Flight              string  `json:"flight"`
 	R                   string  `json:"r"`
 	T                   string  `json:"t"`
+	Desc                string  `json:"desc"`
 	AltBaro             int     `json:"alt_baro"`
 	AltGeom             int     `json:"alt_geom"`
 	Gs                  float64 `json:"gs"`
