@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,4 +108,63 @@ func TestBuildCurrentSightingsLeavesUnknownDescriptionNil(t *testing.T) {
 	if got[0].TypeDescription != nil {
 		t.Errorf("type description: got %v want nil", *got[0].TypeDescription)
 	}
+}
+
+func TestCurrentSightingsStoreReturnsWhatWasStored(t *testing.T) {
+	store := &currentSightingsStore{}
+	generatedAt := time.Unix(1785399041, 0)
+
+	store.replace([]CurrentSighting{{Hex: "aaa111"}}, generatedAt)
+	got, at := store.snapshot()
+
+	if len(got) != 1 || got[0].Hex != "aaa111" {
+		t.Errorf("aircraft: got %v want one row with hex aaa111", got)
+	}
+	if !at.Equal(generatedAt) {
+		t.Errorf("generatedAt: got %v want %v", at, generatedAt)
+	}
+}
+
+// snapshot must hand back a copy: the API goroutine ranges over the result
+// while the 2s ticker is replacing the store's contents.
+func TestCurrentSightingsStoreSnapshotIsACopy(t *testing.T) {
+	store := &currentSightingsStore{}
+	store.replace([]CurrentSighting{{Hex: "aaa111"}}, time.Now())
+
+	got, _ := store.snapshot()
+	got[0].Hex = "mutated"
+
+	again, _ := store.snapshot()
+	if again[0].Hex != "aaa111" {
+		t.Errorf("store was mutated through the snapshot: got %s", again[0].Hex)
+	}
+}
+
+func TestCurrentSightingsStoreIsRaceFree(t *testing.T) {
+	store := &currentSightingsStore{}
+	var wg sync.WaitGroup
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				store.replace([]CurrentSighting{{Hex: "aaa111", DistanceKm: float64(n)}}, time.Now())
+			}
+		}(i)
+	}
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				aircraft, _ := store.snapshot()
+				for range aircraft {
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }

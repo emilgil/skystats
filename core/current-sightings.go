@@ -3,6 +3,7 @@ package main
 import (
 	"math"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -111,4 +112,32 @@ func nilIfEmpty(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+// currentSightingsStore holds the payload the 2s ticker builds so the API
+// goroutine can serve it without touching the database per request.
+type currentSightingsStore struct {
+	mu          sync.RWMutex
+	aircraft    []CurrentSighting
+	generatedAt time.Time
+}
+
+var currentSightings = &currentSightingsStore{}
+
+func (s *currentSightingsStore) replace(aircraft []CurrentSighting, generatedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.aircraft = aircraft
+	s.generatedAt = generatedAt
+}
+
+// snapshot returns a copy so callers can range over the result while the
+// ticker replaces the store's contents.
+func (s *currentSightingsStore) snapshot() ([]CurrentSighting, time.Time) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	aircraft := make([]CurrentSighting, len(s.aircraft))
+	copy(aircraft, s.aircraft)
+	return aircraft, s.generatedAt
 }
