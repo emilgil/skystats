@@ -10,31 +10,44 @@
     let generatedAt = null;
     let loading = true;
     let error = null;
+    let hasLoadedOnce = false;
     let interval = null;
     let observer = null;
     let onScreen = false;
     let cardElement;
     let now = Date.now();
+    let requestSeq = 0;
 
     async function fetchData() {
+        // Sequence guard: startPolling() fires an immediate fetch on top of
+        // the interval one, so a request started earlier can resolve after a
+        // newer one (e.g. the tab is hidden and shown again in quick
+        // succession). Only the highest-issued request is allowed to write
+        // to component state, so a slow, stale response can't clobber a
+        // fresher one.
+        const seq = ++requestSeq;
         try {
             const response = await fetch(endpoint);
             if (!response.ok) {
                 throw new Error(`${response.status}`);
             }
             const result = await response.json();
+            if (seq !== requestSeq) return;
             data = result.aircraft || [];
             generatedAt = result.generated_at;
             error = null;
+            hasLoadedOnce = true;
+            now = Date.now();
         } catch (err) {
+            if (seq !== requestSeq) return;
             // Keep the last good table on screen — one dropped poll out of
             // thirty per minute should not blank the view.
             error = err.message;
+            now = Date.now();
         } finally {
             // Never set loading back to true here: the skeleton would flash
             // over the table every two seconds.
             loading = false;
-            now = Date.now();
         }
     }
 
@@ -113,7 +126,7 @@
         {:else}
             {#if error}
                 <div class="alert alert-warning mb-4 py-2 text-sm">
-                    <span>Live update failed ({error}) — showing last known data</span>
+                    <span>Live update failed ({error}){hasLoadedOnce ? ' — showing last known data' : ''}</span>
                 </div>
             {:else if stale}
                 <div class="alert alert-warning mb-4 py-2 text-sm">
