@@ -131,7 +131,7 @@
                 </div>
             {:else if planespotters}
                 <div>
-                    <img src={planespotters.url} alt="{data.registration} photo" class="w-full h-auto rounded-lg" />
+                    <img src={planespotters.url} alt="{data.registration} photo" class="max-w-sm h-auto rounded-lg mx-auto" />
                     {#if planespotters.photographer}
                         <p class="text-xs text-gray-500 mt-1">
                             &copy; {planespotters.photographer}
@@ -140,7 +140,7 @@
                     {/if}
                 </div>
             {:else if data.photo && !adsbdbImgFailed}
-                <img src={data.photo.url || data.photo.thumbnail} alt="{data.registration} photo" class="w-full h-auto rounded-lg" on:error={() => adsbdbImgFailed = true} />
+                <img src={data.photo.url || data.photo.thumbnail} alt="{data.registration} photo" class="max-w-sm h-auto rounded-lg mx-auto" on:error={() => adsbdbImgFailed = true} />
             {:else}
                 <p class="text-center text-gray-500 py-8">No photo available</p>
             {/if}
