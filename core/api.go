@@ -81,6 +81,7 @@ func (s *APIServer) Start() {
 		stats := api.Group("/stats")
 		{
 			stats.GET("/above", s.getAboveStats)
+			stats.GET("/aircraft/:hex", s.getAircraftDetail)
 
 			stats.GET("/seen/recent", s.getRecentSeenMetrics)
 			stats.GET("/seen/totals", s.getTotalSeenMetrics)

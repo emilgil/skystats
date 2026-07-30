@@ -9,6 +9,7 @@
   import Footer from './components/Footer.svelte';
   import Settings from './components/Settings.svelte';
   import HideableCard from './components/HideableCard.svelte';
+  import AircraftModal from './components/AircraftModal.svelte';
 
   let activeTab = 'activity';
   let tabsElement;
@@ -111,6 +112,8 @@
 </div>
 
 <Settings />
+
+<AircraftModal />
 
 <style>
 
