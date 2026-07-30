@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,20 +23,24 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 		"hex":          hex,
 		"registration": nil,
 		"type":         nil,
+		"manufacturer": nil,
+		"icao_type":    nil,
 		"operator":     nil,
 		"live":         nil,
 		"history":      gin.H{"times_seen": 0, "last_seen": nil},
 		"photo":        nil,
+		"records":      []gin.H{},
+		"observations": []gin.H{},
 		"interesting":  nil,
 	}
 
 	// 1) Identity + photo from registration_data (adsbdb-enriched).
-	var regType, registration, registeredOwner, urlPhoto, urlPhotoThumb *string
+	var regType, registration, registeredOwner, manufacturer, icaoType, urlPhoto, urlPhotoThumb *string
 	err := s.pg.db.QueryRow(context.Background(), `
-		SELECT type, registration, registered_owner, url_photo, url_photo_thumbnail
+		SELECT type, registration, registered_owner, manufacturer, icao_type, url_photo, url_photo_thumbnail
 		FROM registration_data
 		WHERE mode_s = $1`, hex).
-		Scan(&regType, &registration, &registeredOwner, &urlPhoto, &urlPhotoThumb)
+		Scan(&regType, &registration, &registeredOwner, &manufacturer, &icaoType, &urlPhoto, &urlPhotoThumb)
 	if err != nil && err != pgx.ErrNoRows {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -45,6 +50,12 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 	}
 	if regType != nil {
 		resp["type"] = regType
+	}
+	if manufacturer != nil {
+		resp["manufacturer"] = manufacturer
+	}
+	if icaoType != nil {
+		resp["icao_type"] = icaoType
 	}
 	if registeredOwner != nil {
 		resp["operator"] = registeredOwner
@@ -144,6 +155,81 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 			"images":   images,
 		}
 	}
+
+	// 5) Records this aircraft holds: best value per category, deduped across periods.
+	recRows, err := s.pg.db.Query(context.Background(), `
+		SELECT category, metric_name, metric_value::float8
+		FROM records
+		WHERE hex = $1`, hex)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	best := map[string]gin.H{}
+	for recRows.Next() {
+		var category, metricName string
+		var value float64
+		if err := recRows.Scan(&category, &metricName, &value); err != nil {
+			continue
+		}
+		cur, ok := best[category]
+		if !ok {
+			best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
+			continue
+		}
+		// recordCategories[category].KeepMax: true when a larger value is the record.
+		if recordCategories[category].KeepMax {
+			if value > cur["value"].(float64) {
+				best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
+			}
+		} else {
+			if value < cur["value"].(float64) {
+				best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
+			}
+		}
+	}
+	recRows.Close()
+	records := []gin.H{}
+	for _, r := range best {
+		records = append(records, r)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i]["category"].(string) < records[j]["category"].(string)
+	})
+	resp["records"] = records
+
+	// 6) Recent observations (visits) from flight_history, newest first, max 10.
+	obsRows, err := s.pg.db.Query(context.Background(), `
+		SELECT first_seen, last_seen, origin_iata_code, destination_iata_code,
+		       ground_speed::float8, barometric_altitude
+		FROM flight_history
+		WHERE hex = $1
+		ORDER BY first_seen DESC
+		LIMIT 10`, hex)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	observations := []gin.H{}
+	for obsRows.Next() {
+		var firstSeen, lastSeen *time.Time
+		var origin, destination *string
+		var groundSpeed *float64
+		var altitude *int
+		if err := obsRows.Scan(&firstSeen, &lastSeen, &origin, &destination, &groundSpeed, &altitude); err != nil {
+			continue
+		}
+		observations = append(observations, gin.H{
+			"first_seen":   firstSeen,
+			"last_seen":    lastSeen,
+			"origin":       origin,
+			"destination":  destination,
+			"ground_speed": groundSpeed,
+			"altitude":     altitude,
+		})
+	}
+	obsRows.Close()
+	resp["observations"] = observations
 
 	c.JSON(http.StatusOK, resp)
 }
