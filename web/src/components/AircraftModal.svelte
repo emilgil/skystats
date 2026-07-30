@@ -6,25 +6,35 @@
     let loading = false;
     let error = null;
     let planespotters = null; // client-side fallback photo
+    let requestSeq = 0;
 
     async function load(hex) {
+        const seq = ++requestSeq;
         loading = true;
         error = null;
         data = null;
         planespotters = null;
-        document.getElementById('aircraft-modal').showModal();
+        const dialog = document.getElementById('aircraft-modal');
+        if (dialog && !dialog.open) {
+            dialog.showModal();
+        }
         try {
             const res = await fetch('/api/stats/aircraft/' + hex);
             if (!res.ok) throw new Error(`${res.status}`);
-            data = await res.json();
+            const result = await res.json();
+            if (seq !== requestSeq) return; // superseded by a newer open
+            data = result;
             const hasInterestingImages = data.interesting?.images?.length > 0;
             if (!hasInterestingImages && !data.photo) {
-                planespotters = await fetchPlanespotters(hex);
+                const ps = await fetchPlanespotters(hex);
+                if (seq !== requestSeq) return;
+                planespotters = ps;
             }
         } catch (err) {
+            if (seq !== requestSeq) return;
             error = err.message;
         } finally {
-            loading = false;
+            if (seq === requestSeq) loading = false;
         }
     }
 
@@ -50,6 +60,7 @@
         data = null;
         error = null;
         planespotters = null;
+        loading = false;
     }
 
     // Open + fetch whenever a hex is selected.
