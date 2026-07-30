@@ -1,6 +1,7 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
     import { IconPlane } from '@tabler/icons-svelte';
+    import { openAircraftModal } from '../stores/aircraftModal';
 
     const endpoint = 'api/stats/current';
     const refreshRate = 2000;
@@ -157,7 +158,7 @@
                         </thead>
                         <tbody>
                             {#each data as aircraft (aircraft.hex)}
-                                <tr>
+                                <tr class="cursor-pointer hover:bg-base-300" on:click={() => openAircraftModal(aircraft.hex)}>
                                     <td class="font-mono whitespace-nowrap">{aircraft.flight || '—'}</td>
                                     <td class="font-mono whitespace-nowrap">{aircraft.registration || '—'}</td>
                                     <td class="whitespace-nowrap" title={aircraft.type_description || ''}>
