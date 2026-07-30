@@ -12,6 +12,16 @@
 
     $: disableTags = $settings['disable_planealertdb_tags']?.setting_value === 'true';
 
+    const RECORD_LABELS = {
+        fastest: { label: 'Fastest', unit: 'kt' },
+        slowest: { label: 'Slowest', unit: 'kt' },
+        highest: { label: 'Highest', unit: 'ft' },
+        lowest: { label: 'Lowest', unit: 'ft' },
+        furthest_flown: { label: 'Furthest flown', unit: 'km' },
+        longest_route: { label: 'Longest route', unit: 'km' },
+        most_remaining: { label: 'Most remaining', unit: 'km' },
+    };
+
     async function load(hex) {
         const seq = ++requestSeq;
         loading = true;
@@ -100,7 +110,21 @@
                 {/if}
             </div>
             {#if data.operator}
-                <p class="text-sm text-gray-600 mb-4">{data.operator}</p>
+                <p class="text-sm text-gray-600 mb-1">{data.operator}</p>
+            {/if}
+            {#if data.manufacturer || data.type}
+                <p class="text-sm text-gray-500 mb-3">
+                    {[data.manufacturer, data.type].filter(Boolean).join(' · ')}{#if data.icao_type} ({data.icao_type}){/if}
+                </p>
+            {/if}
+            {#if data.records?.length}
+                <div class="flex flex-wrap gap-2 mb-4">
+                    {#each data.records as rec}
+                        <div class="badge badge-primary badge-outline gap-1">
+                            {RECORD_LABELS[rec.category]?.label ?? rec.category} — {Math.round(rec.value)} {RECORD_LABELS[rec.category]?.unit ?? ''}
+                        </div>
+                    {/each}
+                </div>
             {/if}
 
             {#if data.live}
@@ -122,6 +146,30 @@
                 <div><span class="text-xs uppercase text-gray-500">Times seen</span><div>{data.history?.times_seen ?? 0}</div></div>
                 <div><span class="text-xs uppercase text-gray-500">Last seen</span><div>{data.history?.last_seen ? new Date(data.history.last_seen).toLocaleString() : '-'}</div></div>
             </div>
+
+            {#if data.observations?.length}
+                <div class="mb-4">
+                    <div class="text-xs uppercase text-gray-500 mb-1">Recent observations</div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-xs">
+                            <thead><tr><th>Time</th><th>Route</th><th>Speed</th><th>Alt</th></tr></thead>
+                            <tbody>
+                                {#each data.observations as obs}
+                                    <tr>
+                                        <td class="whitespace-nowrap">{obs.first_seen ? new Date(obs.first_seen).toLocaleString() : '-'}</td>
+                                        <td class="whitespace-nowrap">{obs.origin || '—'} → {obs.destination || '—'}</td>
+                                        <td>{obs.ground_speed != null ? Math.round(obs.ground_speed) + ' kt' : '-'}</td>
+                                        <td>{obs.altitude != null ? obs.altitude + ' ft' : '-'}</td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </table>
+                    </div>
+                    {#if (data.history?.times_seen ?? 0) > data.observations.length}
+                        <div class="text-xs text-gray-500 mt-1">…and {data.history.times_seen - data.observations.length} more</div>
+                    {/if}
+                </div>
+            {/if}
 
             {#if data.interesting?.images?.length}
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
