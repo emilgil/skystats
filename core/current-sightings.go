@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"math"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/rs/zerolog/log"
 )
 
@@ -242,4 +244,22 @@ func refreshCurrentSightings(pg *postgres, nowEpoch float64, aircraft []Aircraft
 	})
 
 	currentSightings.replace(sightings, generatedAt)
+}
+
+// getCurrentSightings serves the payload the ticker has already assembled.
+// generated_at is null until the first tick has completed, and lets the
+// frontend tell "nothing in range" apart from "the feed stopped answering".
+func (s *APIServer) getCurrentSightings(c *gin.Context) {
+
+	aircraft, generatedAt := currentSightings.snapshot()
+
+	var generated *time.Time
+	if !generatedAt.IsZero() {
+		generated = &generatedAt
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"generated_at": generated,
+		"aircraft":     aircraft,
+	})
 }
