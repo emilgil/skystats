@@ -141,10 +141,8 @@ func allTimeBest(pg *postgres, meta recordCategory) (recordBest, bool) {
 
 	// flight/registration/type are nullable in the records table; scan through
 	// NullString so a NULL on the current #1 row does not abort detection.
-	var (
-		b                          recordBest
-		flight, registration, typ sql.NullString
-	)
+	var b recordBest
+	var flight, registration, typ sql.NullString
 	err := pg.db.QueryRow(context.Background(), query, meta.Name).Scan(
 		&b.Hex, &flight, &registration, &typ, &b.FirstSeen, &b.MetricValue)
 	if err != nil {
