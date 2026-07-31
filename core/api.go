@@ -138,6 +138,11 @@ func (s *APIServer) Start() {
 			settings.PUT("", s.updateSettings)
 		}
 
+		notifications := api.Group("/notifications")
+		{
+			notifications.POST("/test", s.testNotification)
+		}
+
 		api.GET("/version", s.getVersion)
 	}
 
@@ -1412,4 +1417,22 @@ func (s *APIServer) getTotalSeenMetrics(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, stats)
+}
+
+func (s *APIServer) testNotification(c *gin.Context) {
+	var body struct {
+		AppriseAPIURL    string `json:"apprise_api_url"`
+		AppriseConfigKey string `json:"apprise_config_key"`
+	}
+	_ = c.ShouldBindJSON(&body) // body is optional; falls back to saved settings
+
+	if notifier == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "notifier not initialised"})
+		return
+	}
+	if err := notifier.SendTest(body.AppriseAPIURL, body.AppriseConfigKey); err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "sent"})
 }
