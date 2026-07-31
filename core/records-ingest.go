@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -138,12 +139,20 @@ func allTimeBest(pg *postgres, meta recordCategory) (recordBest, bool) {
 		ORDER BY metric_value %s, first_seen ASC
 		LIMIT 1`, meta.bestFirstSQL())
 
-	var b recordBest
+	// flight/registration/type are nullable in the records table; scan through
+	// NullString so a NULL on the current #1 row does not abort detection.
+	var (
+		b                          recordBest
+		flight, registration, typ sql.NullString
+	)
 	err := pg.db.QueryRow(context.Background(), query, meta.Name).Scan(
-		&b.Hex, &b.Flight, &b.Registration, &b.Type, &b.FirstSeen, &b.MetricValue)
+		&b.Hex, &flight, &registration, &typ, &b.FirstSeen, &b.MetricValue)
 	if err != nil {
 		return recordBest{}, false
 	}
+	b.Flight = flight.String
+	b.Registration = registration.String
+	b.Type = typ.String
 	return b, true
 }
 

@@ -146,6 +146,9 @@ func buildInterestingMessage(a InterestingAircraft, distanceKm *float64, routeFr
 	if strings.TrimSpace(name) == "" {
 		name = strings.TrimSpace(a.Flight)
 	}
+	if name == "" && a.Registration.Valid {
+		name = a.Registration.String
+	}
 	if name == "" {
 		name = a.Hex
 	}

@@ -128,7 +128,7 @@
             notify_group_gov: notifyGroupGov.toString(),
             notify_group_pol: notifyGroupPol.toString(),
             notify_group_civ: notifyGroupCiv.toString(),
-            notification_cooldown_minutes: notificationCooldownMinutes.toString(),
+            notification_cooldown_minutes: (Number.isFinite(notificationCooldownMinutes) && notificationCooldownMinutes >= 1 ? Math.floor(notificationCooldownMinutes) : 60).toString(),
             notify_record_fastest: notifyRecordFastest.toString(),
             notify_record_slowest: notifyRecordSlowest.toString(),
             notify_record_highest: notifyRecordHighest.toString(),
