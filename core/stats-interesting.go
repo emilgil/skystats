@@ -199,6 +199,11 @@ func updateInterestingSeen(pg *postgres) {
 		}
 	}
 
+	if notifier != nil && len(interestingAircrafts) > 0 {
+		toNotify := append([]InterestingAircraft(nil), interestingAircrafts...)
+		go notifier.NotifyBatch(toNotify)
+	}
+
 	MarkProcessed(pg, "interesting_processed", aircrafts)
 
 }

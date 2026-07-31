@@ -93,6 +93,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialise the process-wide notification sender used by the interesting
+	// and record triggers.
+	notifier = NewNotificationService(pg)
+
 	// Start API server in a separate goroutine
 	log.Info().Msg("Starting API server")
 	apiServer := NewAPIServer(pg)
