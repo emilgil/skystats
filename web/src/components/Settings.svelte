@@ -34,9 +34,21 @@
     let settingsChanged = false;
     let version = { version: '...', commit: '...', date: '...' };
 
+    let notificationsEnabled = false;
+    let appriseApiUrl = '';
+    let appriseConfigKey = '';
+    let notifyGroupMil = true, notifyGroupGov = true, notifyGroupPol = true, notifyGroupCiv = true;
+    let notifyRecordFastest = true, notifyRecordSlowest = true, notifyRecordHighest = true, notifyRecordLowest = true;
+    let notifyRecordFurthestFlown = true, notifyRecordLongestRoute = true, notifyRecordMostRemaining = true;
+    let notificationCooldownMinutes = 60;
+    let notificationsChanged = false;
+    let isTestingNotification = false;
+    let testResult = null;
+
     const menuItems = [
         { id: 'display', label: 'Display' },
         { id: 'cards', label: 'Cards' },
+        { id: 'notifications', label: 'Notifications' },
         { id: 'about', label: 'About' }
     ];
 
@@ -53,6 +65,24 @@
         if ($settings.disable_planealertdb_tags) {
             disablePlaneAlertDbTags = $settings.disable_planealertdb_tags.setting_value === 'true';
         }
+    }
+
+    $: if (!notificationsChanged) {
+        if ($settings.notifications_enabled) notificationsEnabled = $settings.notifications_enabled.setting_value === 'true';
+        if ($settings.apprise_api_url) appriseApiUrl = $settings.apprise_api_url.setting_value;
+        if ($settings.apprise_config_key) appriseConfigKey = $settings.apprise_config_key.setting_value;
+        if ($settings.notify_group_mil) notifyGroupMil = $settings.notify_group_mil.setting_value === 'true';
+        if ($settings.notify_group_gov) notifyGroupGov = $settings.notify_group_gov.setting_value === 'true';
+        if ($settings.notify_group_pol) notifyGroupPol = $settings.notify_group_pol.setting_value === 'true';
+        if ($settings.notify_group_civ) notifyGroupCiv = $settings.notify_group_civ.setting_value === 'true';
+        if ($settings.notify_record_fastest) notifyRecordFastest = $settings.notify_record_fastest.setting_value === 'true';
+        if ($settings.notify_record_slowest) notifyRecordSlowest = $settings.notify_record_slowest.setting_value === 'true';
+        if ($settings.notify_record_highest) notifyRecordHighest = $settings.notify_record_highest.setting_value === 'true';
+        if ($settings.notify_record_lowest) notifyRecordLowest = $settings.notify_record_lowest.setting_value === 'true';
+        if ($settings.notify_record_furthest_flown) notifyRecordFurthestFlown = $settings.notify_record_furthest_flown.setting_value === 'true';
+        if ($settings.notify_record_longest_route) notifyRecordLongestRoute = $settings.notify_record_longest_route.setting_value === 'true';
+        if ($settings.notify_record_most_remaining) notifyRecordMostRemaining = $settings.notify_record_most_remaining.setting_value === 'true';
+        if ($settings.notification_cooldown_minutes) notificationCooldownMinutes = parseInt($settings.notification_cooldown_minutes.setting_value);
     }
 
     function handleSettingChange() {
@@ -81,6 +111,59 @@
             if (modal) modal.close();
         }
         isSaving = false;
+    }
+
+    function handleNotificationChange() {
+        notificationsChanged = true;
+        testResult = null;
+    }
+
+    async function saveNotificationSettings() {
+        isSaving = true;
+        const updates = {
+            notifications_enabled: notificationsEnabled.toString(),
+            apprise_api_url: appriseApiUrl ?? '',
+            apprise_config_key: appriseConfigKey ?? '',
+            notify_group_mil: notifyGroupMil.toString(),
+            notify_group_gov: notifyGroupGov.toString(),
+            notify_group_pol: notifyGroupPol.toString(),
+            notify_group_civ: notifyGroupCiv.toString(),
+            notification_cooldown_minutes: notificationCooldownMinutes.toString(),
+            notify_record_fastest: notifyRecordFastest.toString(),
+            notify_record_slowest: notifyRecordSlowest.toString(),
+            notify_record_highest: notifyRecordHighest.toString(),
+            notify_record_lowest: notifyRecordLowest.toString(),
+            notify_record_furthest_flown: notifyRecordFurthestFlown.toString(),
+            notify_record_longest_route: notifyRecordLongestRoute.toString(),
+            notify_record_most_remaining: notifyRecordMostRemaining.toString()
+        };
+        const success = await settings.save(updates);
+        if (success) notificationsChanged = false;
+        isSaving = false;
+    }
+
+    async function testNotification() {
+        isTestingNotification = true;
+        testResult = null;
+        try {
+            const response = await fetch('/api/notifications/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    apprise_api_url: appriseApiUrl ?? '',
+                    apprise_config_key: appriseConfigKey ?? ''
+                })
+            });
+            if (response.ok) {
+                testResult = { ok: true, message: 'Test notification sent!' };
+            } else {
+                const data = await response.json().catch(() => ({}));
+                testResult = { ok: false, message: data.error || 'Failed to send test notification' };
+            }
+        } catch (e) {
+            testResult = { ok: false, message: e.message };
+        }
+        isTestingNotification = false;
     }
 
     async function fetchVersion() {
@@ -240,6 +323,64 @@
                             {/each}
                         </div>
 
+                    {:else if activeMenuItem === 'notifications'}
+                        <h4 class="text-lg font-semibold mb-6">Notification Settings</h4>
+
+                        <form id="notification-settings-form" class="space-y-6">
+                            <label class="flex items-center gap-3">
+                                <input type="checkbox" bind:checked={notificationsEnabled} on:change={handleNotificationChange} class="checkbox" />
+                                <span class="text-m">Enable Apprise notifications</span>
+                            </label>
+
+                            <div>
+                                <p class="text-xl font-extralight tracking-wider mb-2">Apprise connection</p>
+                                <p class="text-m text-base-content/70 mb-2">Apprise API URL</p>
+                                <input type="url" bind:value={appriseApiUrl} on:input={handleNotificationChange}
+                                    placeholder="http://192.168.1.10:8000" class="input w-full max-w-md" />
+                                <p class="text-m text-base-content/70 mt-3 mb-2">Config key</p>
+                                <input type="text" bind:value={appriseConfigKey} on:input={handleNotificationChange}
+                                    placeholder="skystats" class="input w-full max-w-md" />
+                            </div>
+
+                            <div>
+                                <p class="text-xl font-extralight tracking-wider mb-2">Interesting categories</p>
+                                <div class="grid grid-cols-2 gap-2 max-w-md">
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyGroupMil} on:change={handleNotificationChange} /><span class="text-sm">Military</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyGroupGov} on:change={handleNotificationChange} /><span class="text-sm">Government</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyGroupPol} on:change={handleNotificationChange} /><span class="text-sm">Police</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyGroupCiv} on:change={handleNotificationChange} /><span class="text-sm">Civilian</span></label>
+                                </div>
+                            </div>
+
+                            <div>
+                                <p class="text-xl font-extralight tracking-wider mb-2">All-time records</p>
+                                <div class="grid grid-cols-2 gap-2 max-w-md">
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordFastest} on:change={handleNotificationChange} /><span class="text-sm">Fastest</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordSlowest} on:change={handleNotificationChange} /><span class="text-sm">Slowest</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordHighest} on:change={handleNotificationChange} /><span class="text-sm">Highest</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordLowest} on:change={handleNotificationChange} /><span class="text-sm">Lowest</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordFurthestFlown} on:change={handleNotificationChange} /><span class="text-sm">Furthest flown</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordLongestRoute} on:change={handleNotificationChange} /><span class="text-sm">Longest route</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordMostRemaining} on:change={handleNotificationChange} /><span class="text-sm">Most remaining</span></label>
+                                </div>
+                            </div>
+
+                            <div>
+                                <p class="text-xl font-extralight tracking-wider mb-2">Cooldown</p>
+                                <p class="text-m text-base-content/70 mb-2">Minutes to wait before notifying about the same interesting aircraft again</p>
+                                <input type="number" bind:value={notificationCooldownMinutes} on:input={handleNotificationChange} min="1" step="1" class="input w-20" />
+                            </div>
+
+                            <div class="flex items-center gap-3">
+                                <button type="button" class="btn btn-outline" on:click={testNotification} disabled={isTestingNotification}>
+                                    {isTestingNotification ? 'Sending...' : 'Send test notification'}
+                                </button>
+                                {#if testResult}
+                                    <span class="text-sm {testResult.ok ? 'text-success' : 'text-error'}">{testResult.message}</span>
+                                {/if}
+                            </div>
+                        </form>
+
                     {:else if activeMenuItem === 'about'}
                         <div class="text-center mx-auto">
                             <div class="flex items-center justify-center gap-6 mb-2">
@@ -272,6 +413,18 @@
                             class="btn btn-primary"
                             on:click={saveSettings}
                             disabled={!settingsChanged || isSaving}
+                        >
+                            {isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                    </div>
+                {/if}
+
+                {#if activeMenuItem === 'notifications'}
+                    <div class="modal-action justify-end">
+                        <button
+                            class="btn btn-primary"
+                            on:click={saveNotificationSettings}
+                            disabled={!notificationsChanged || isSaving}
                         >
                             {isSaving ? 'Saving...' : 'Save'}
                         </button>
