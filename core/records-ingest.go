@@ -75,6 +75,8 @@ func writeRecords(pg *postgres, category string, candidates []recordCandidate) {
 		return
 	}
 
+	oldBest, hadOld := allTimeBest(pg, meta)
+
 	now := time.Now()
 	affected := map[string]bool{}
 	batch := &pgx.Batch{}
@@ -115,6 +117,34 @@ func writeRecords(pg *postgres, category string, candidates []recordCandidate) {
 	for period := range affected {
 		trimRecordsBucket(pg, meta, period, 100)
 	}
+
+	// Notify when a candidate has beaten the previous all-time #1. A missing
+	// previous best (fresh install) is treated as a silent baseline.
+	if notifier != nil && hadOld {
+		if newBest, hasNew := allTimeBest(pg, meta); hasNew && improved(oldBest.MetricValue, newBest.MetricValue, meta.KeepMax) {
+			prev := oldBest.MetricValue
+			go notifier.NotifyRecord(category, newBest, prev, true)
+		}
+	}
+}
+
+// allTimeBest returns the current #1 all_time record for a category, and false
+// when the bucket is empty. metric_value is cast to float8 to match the read path.
+func allTimeBest(pg *postgres, meta recordCategory) (recordBest, bool) {
+	query := fmt.Sprintf(`
+		SELECT hex, flight, registration, type, first_seen, metric_value::float8
+		FROM records
+		WHERE category = $1 AND period_type = 'all_time'
+		ORDER BY metric_value %s, first_seen ASC
+		LIMIT 1`, meta.bestFirstSQL())
+
+	var b recordBest
+	err := pg.db.QueryRow(context.Background(), query, meta.Name).Scan(
+		&b.Hex, &b.Flight, &b.Registration, &b.Type, &b.FirstSeen, &b.MetricValue)
+	if err != nil {
+		return recordBest{}, false
+	}
+	return b, true
 }
 
 // trimRecordsBucket keeps only the best maxRows rows in one (category, period)
