@@ -23,6 +23,29 @@ func getIntSetting(pg *postgres, key string, def int) int {
 	return n
 }
 
+// getStringSetting reads a string user_settings value, returning def on any error.
+func getStringSetting(pg *postgres, key, def string) string {
+	var val string
+	err := pg.db.QueryRow(context.Background(),
+		`SELECT setting_value FROM user_settings WHERE setting_key = $1`, key).Scan(&val)
+	if err != nil {
+		return def
+	}
+	return val
+}
+
+// getBoolSetting reads a boolean user_settings value ("true"/"false"),
+// returning def on any error.
+func getBoolSetting(pg *postgres, key string, def bool) bool {
+	var val string
+	err := pg.db.QueryRow(context.Background(),
+		`SELECT setting_value FROM user_settings WHERE setting_key = $1`, key).Scan(&val)
+	if err != nil {
+		return def
+	}
+	return val == "true"
+}
+
 // runLeaderboardSweep deletes records whose first_seen has aged out of their
 // period window. all_time is exempt (it only sheds rows via trim-to-100).
 func runLeaderboardSweep(pg *postgres) {
