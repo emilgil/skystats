@@ -7,3 +7,6 @@ skystats.pid
 .vite
 # Added by goreleaser init:
 dist/
+
+# Superpowers SDD scratch workspace
+.superpowers/
