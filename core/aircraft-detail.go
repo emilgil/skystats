@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -65,7 +66,7 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 	}
 
 	// 2) Live status: newest aircraft_data row for this hex, airline via route_data.
-	var flight, airlineName *string
+	var flight, airlineName, readsbReg *string
 	var altBaro *int
 	var gs, track, distance, bearing, lat, lon *float64
 	var lastSeen *time.Time
@@ -74,13 +75,13 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 		       ad.gs::float8, ad.track::float8,
 		       ad.last_seen_distance::float8, ad.last_seen_bearing::float8,
 		       ad.last_seen_lat::float8, ad.last_seen_lon::float8,
-		       ad.last_seen, rt.airline_name
+		       ad.last_seen, rt.airline_name, ad.r
 		FROM aircraft_data ad
 		LEFT JOIN route_data rt ON ad.flight = rt.route_callsign
 		WHERE ad.hex = $1
 		ORDER BY ad.last_seen DESC
 		LIMIT 1`, hex).
-		Scan(&flight, &altBaro, &gs, &track, &distance, &bearing, &lat, &lon, &lastSeen, &airlineName)
+		Scan(&flight, &altBaro, &gs, &track, &distance, &bearing, &lat, &lon, &lastSeen, &airlineName, &readsbReg)
 	if err != nil && err != pgx.ErrNoRows {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -99,6 +100,16 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 				"bearing":      bearing,
 				"lat":          lat,
 				"lon":          lon,
+			}
+		}
+	}
+
+	// Fallback: adsbdb had no registration — use the readsb `r` from the feed
+	// (aircraft_data.r), which covers far more aircraft. adsbdb keeps priority.
+	if readsbReg != nil {
+		if trimmed := strings.TrimSpace(*readsbReg); trimmed != "" {
+			if cur, ok := resp["registration"].(*string); !ok || cur == nil || *cur == "" {
+				resp["registration"] = trimmed
 			}
 		}
 	}
