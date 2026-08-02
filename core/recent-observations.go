@@ -45,7 +45,7 @@ func (s *APIServer) getRecentObservations(c *gin.Context) {
 		FROM flight_history fh
 		LEFT JOIN route_data rt ON fh.flight = rt.route_callsign
 		WHERE fh.first_seen >= $1
-		ORDER BY fh.first_seen DESC
+		ORDER BY fh.first_seen DESC, fh.id DESC
 		LIMIT $2`
 
 	rows, err := s.pg.db.Query(context.Background(), query, cutoff, limit)
@@ -79,6 +79,11 @@ func (s *APIServer) getRecentObservations(c *gin.Context) {
 			"destination_iata_code": destinationIata,
 			"airline_name":          airlineName,
 		})
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, out)
