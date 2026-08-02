@@ -23,8 +23,8 @@
     };
 
     const fr24Url          = (reg) => `https://www.flightradar24.com/data/aircraft/${reg.toLowerCase()}`;
-    const planespottersUrl = (hex) => `https://www.planespotters.net/hex/${hex}`;
-    const adsbdbUrl        = (hex) => `https://api.adsbdb.com/v0/aircraft/${hex}`;
+    const planespottersUrl = (hex) => `https://www.planespotters.net/hex/${hex.toUpperCase()}`;
+    const adsbxUrl         = (hex) => `https://globe.adsbexchange.com/?icao=${hex}`;
     const jetphotosUrl     = (reg) => `https://www.jetphotos.com/registration/${reg}`;
 
     async function load(hex) {
@@ -132,7 +132,7 @@
                         <a class="btn btn-xs btn-outline" href={planespottersUrl(data.hex)} target="_blank" rel="noopener noreferrer">Planespotters</a>
                     {/if}
                     {#if data.hex}
-                        <a class="btn btn-xs btn-outline" href={adsbdbUrl(data.hex)} target="_blank" rel="noopener noreferrer">adsbdb</a>
+                        <a class="btn btn-xs btn-outline" href={adsbxUrl(data.hex)} target="_blank" rel="noopener noreferrer">ADSB Exchange</a>
                     {/if}
                     {#if data.registration}
                         <a class="btn btn-xs btn-outline" href={jetphotosUrl(data.registration)} target="_blank" rel="noopener noreferrer">JetPhotos</a>
