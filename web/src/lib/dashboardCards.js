@@ -19,6 +19,7 @@ import InterestingGovAircraft from '../components/InterestingGovAircraft.svelte'
 import InterestingPolAircraft from '../components/InterestingPolAircraft.svelte';
 import InterestingCivAircraft from '../components/InterestingCivAircraft.svelte';
 
+import MotionRecentObservations from '../components/MotionRecentObservations.svelte';
 import MotionFastestAircraft from '../components/MotionFastestAircraft.svelte';
 import MotionSlowestAircraft from '../components/MotionSlowestAircraft.svelte';
 import MotionHighestAircraft from '../components/MotionHighestAircraft.svelte';
@@ -50,6 +51,7 @@ export const dashboardCards = [
     { id: 'interesting_police', title: 'Police Aircraft', tab: 'interesting-stat', component: InterestingPolAircraft },
     { id: 'interesting_civilian', title: 'Civilian Aircraft', tab: 'interesting-stat', component: InterestingCivAircraft },
 
+    { id: 'motion_recent', title: 'Recent Observations', tab: 'motion-stat', component: MotionRecentObservations },
     { id: 'motion_fastest', title: 'Fastest Aircraft', tab: 'motion-stat', component: MotionFastestAircraft },
     { id: 'motion_slowest', title: 'Slowest Aircraft', tab: 'motion-stat', component: MotionSlowestAircraft },
     { id: 'motion_highest', title: 'Highest Aircraft', tab: 'motion-stat', component: MotionHighestAircraft },
