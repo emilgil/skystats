@@ -144,6 +144,18 @@ func (s *APIServer) Start() {
 			notifications.POST("/test", s.testNotification)
 		}
 
+		watches := api.Group("/watches")
+		{
+			// Static GET children only, and :id only on PUT/DELETE, so there is
+			// no route conflict on the /watches/... segment.
+			watches.GET("", s.getWatches)
+			watches.GET("/fields", s.getWatchFields)
+			watches.GET("/hits", s.getWatchHits)
+			watches.POST("", s.createWatchHandler)
+			watches.PUT("/:id", s.updateWatchHandler)
+			watches.DELETE("/:id", s.deleteWatchHandler)
+		}
+
 		api.GET("/version", s.getVersion)
 	}
 
