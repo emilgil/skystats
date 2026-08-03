@@ -59,6 +59,11 @@ type watchSubject struct {
 	HasSpeed        bool
 	VerticalRateFpm float64
 	FirstSeenEver   bool
+
+	// PhotoURL is the adsbdb photo for this airframe, empty when adsbdb has
+	// none (roughly half the fleet). It is not matchable — it exists so a
+	// notification can carry the picture.
+	PhotoURL string
 }
 
 // Field kinds drive the value input the frontend renders and the validation

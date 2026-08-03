@@ -83,6 +83,7 @@ func buildWatchSubject(a Aircraft, e aircraftEnrichment, distanceKm float64, has
 		HasSpeed:        a.Gs != 0,
 		VerticalRateFpm: float64(a.BaroRate),
 		FirstSeenEver:   firstSeenEver,
+		PhotoURL:        stringValue(e.PhotoURL),
 	}
 
 	s.AirlineCodes = nonEmptyValues(stringValue(e.AirlineIcao), stringValue(e.AirlineIata))

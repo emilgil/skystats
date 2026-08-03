@@ -483,7 +483,10 @@ func (n *NotificationService) NotifyWatch(cfg NotificationConfig, w Watch, s wat
 	}
 
 	success := false
-	if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
+	// Attach carries the airframe photo, matching what interesting-aircraft
+	// notifications already do. adsbdb has no photo for roughly half the
+	// fleet; apprisePayload omits the field when it is empty.
+	if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body, Attach: s.PhotoURL}); err != nil {
 		sendError = err.Error()
 		log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
 	} else {
