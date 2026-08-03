@@ -91,9 +91,9 @@ export async function loadWatchHits(watchId) {
         const response = await fetch(`/api/watches/hits${query}`);
         if (!response.ok) throw new Error('Failed to load watch hits');
         const data = await response.json();
-        return data.hits ?? [];
+        return { hits: data.hits ?? [], error: null };
     } catch (error) {
         console.error('Failed to load watch hits:', error);
-        return [];
+        return { hits: [], error: 'Could not load watch hits' };
     }
 }

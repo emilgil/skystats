@@ -18,7 +18,15 @@
     async function onToggle(watch) {
         actionError = null;
         const result = await toggleWatch(watch);
-        if (!result.ok) actionError = result.error;
+        if (!result.ok) {
+            // The checkbox already flipped visually (native browser behaviour,
+            // ahead of this handler). saveWatch does not call loadWatches() on
+            // failure, so without this the store — and therefore the checkbox —
+            // would stay out of sync with what the server actually holds.
+            // Re-fetching snaps it back to the true state alongside the error.
+            await loadWatches();
+            actionError = result.error;
+        }
     }
 
     async function onDelete(watch) {

@@ -6,9 +6,12 @@
 
     let hits = [];
     let loading = true;
+    let error = null;
 
     onMount(async () => {
-        hits = await loadWatchHits();
+        const result = await loadWatchHits();
+        hits = result.hits;
+        error = result.error;
         loading = false;
     });
 
@@ -35,6 +38,8 @@
 
 {#if loading}
     <div class="flex justify-center py-8"><span class="loading loading-spinner loading-lg"></span></div>
+{:else if error}
+    <div class="alert alert-error"><span>{error}</span></div>
 {:else if hits.length === 0}
     <p class="text-center opacity-60 py-8">No watch hits recorded yet.</p>
 {:else}
