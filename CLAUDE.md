@@ -44,7 +44,7 @@ readsb `aircraft.json` (polled over HTTP) → Go daemon → PostgreSQL → Gin A
 
 `core.go` is the entry point. After connecting to Postgres, running migrations, and syncing plane-alert-db reference data, it starts the API server in a goroutine and then loops forever on tickers:
 
-- **2s** — fetch `READSB_AIRCRAFT_JSON` and upsert aircraft positions (`aircraft.go`, `readsb.go`). Only aircraft within `RADIUS` km of `LAT`/`LON` are recorded (distance via cheap-ruler). This hot path uses an in-memory recently-seen cache (`recentAircraftCache` on the `postgres` struct, 10-minute sliding expiry) so unchanged aircraft skip the DB lookup.
+- **2s** — fetch `READSB_AIRCRAFT_JSON` and upsert aircraft positions (`aircraft.go`, `readsb.go`). Only aircraft within `RADIUS` km of `LAT`/`LON` are recorded (distance via cheap-ruler). This hot path uses an in-memory recently-seen cache (`recentAircraftCache` on the `postgres` struct, 10-minute sliding expiry) so unchanged aircraft skip the DB lookup. The same tick fetches Postgres enrichment once (`enrichAircraftSnapshot`) and feeds it to both Current Sightings and the watch engine (`watches-engine.go`), which matches every aircraft against the user's watches and fires one Apprise notification per sighting that starts matching.
 - **30s** — enrich registrations from the external adsbdb API (`registrations.go`)
 - **120s** — recompute measurement statistics (`stats-motion.go`) and "interesting seen" (`stats-interesting.go`)
 - **300s** — enrich routes from adsbdb (`routes.go`)
@@ -59,6 +59,14 @@ Gin server exposing read-only stats under `/api/stats/...` (above, seen, routes,
 - `SettingsService` (`settings.go`) — key/value user settings in the `user_settings` table.
 
 Endpoints accept a `tz` query param for timezone-aware stats. Gin runs in debug mode when `LOG_LEVEL` is `DEBUG`/`TRACE`, release mode otherwise. The same Gin server also serves the built frontend as static files, which is how the Docker image serves both API and UI from one process.
+
+### Watches
+
+User-defined rules (`watches` + `watch_conditions`) are matched against the live snapshot every 2s. `watches-match.go` holds the field registry, the `watchSubject` model and the pure matching predicates — it is the single source of truth for which operators each field accepts, and it is what `/api/watches/fields` serves to the frontend. `watch_active_matches` records which aircraft currently match which watch so a notification fires only when a match starts; a match that goes 10 minutes without being re-confirmed ends, and the aircraft can notify again on its next sighting. `watch_notifications` is the permanent hit history and is written whether or not Apprise sending succeeded. `known_aircraft` is a never-pruned archive of every hex ever seen, backing the "first time ever seen" criterion.
+
+Matching runs against the live readsb snapshot rather than `aircraft_data`: that table never stores `squawk` or `baro_rate`, and its `alt_baro`/`gs` columns hold the session maximum rather than the current value, so it cannot answer "is this aircraft over 1000ft right now." Postgres supplies only the enrichment the feed lacks (registration, routing, airline), fetched once per tick and shared with Current Sightings.
+
+One accepted limitation: `HasSpeed` is derived from `a.Gs != 0`, and readsb omits `gs` entirely when it has no value, so an aircraft genuinely reporting 0 kt is treated as having no speed data — a "ground speed under N" watch will not match a stationary aircraft. This was kept rather than reworking the shared `Aircraft` model, since it errs toward not matching, which is the safer direction.
 
 ### Database
 

@@ -34,6 +34,7 @@
 * Slowest Aircraft
 * Highest Aircraft
 * Lowest Aircraft
+* Watches - user-defined rules matched against live aircraft, firing an Apprise notification when a match starts
 
 ## Setup
 
