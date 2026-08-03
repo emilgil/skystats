@@ -59,3 +59,40 @@ func TestActiveMatchStoreForgetDropsOnlyThatWatch(t *testing.T) {
 		t.Error("watch 1's match should have survived forget(2)")
 	}
 }
+
+func TestWatchStorePublishDiscardsStaleGeneration(t *testing.T) {
+	store := &watchStore{}
+
+	// Capture gen the way enabled() does before starting its fetch.
+	gen := store.gen
+
+	// Simulate a write landing while that fetch was in flight.
+	store.invalidate()
+
+	// The fetch (started before the invalidate) now tries to publish its
+	// now-stale snapshot.
+	store.publish([]Watch{{ID: 1}}, gen)
+
+	if store.loaded {
+		t.Error("publish with a stale generation must not mark the cache loaded")
+	}
+	if len(store.watches) != 0 {
+		t.Errorf("publish with a stale generation must not store watches, got %d", len(store.watches))
+	}
+}
+
+func TestWatchStorePublishCommitsCurrentGeneration(t *testing.T) {
+	store := &watchStore{}
+
+	gen := store.gen
+	watches := []Watch{{ID: 1}, {ID: 2}}
+
+	store.publish(watches, gen)
+
+	if !store.loaded {
+		t.Error("publish with an unchanged generation should mark the cache loaded")
+	}
+	if len(store.watches) != 2 {
+		t.Fatalf("got %d watches want 2", len(store.watches))
+	}
+}

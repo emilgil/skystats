@@ -100,11 +100,16 @@ func (s *activeMatchStore) apply(current map[watchKey]bool, ended []watchKey, no
 // watchStore caches the enabled watch definitions so the 2s tick does not
 // re-read them from Postgres every time. The daemon is the only writer, so
 // invalidating on write keeps the cache exact rather than eventually
-// consistent.
+// consistent — but the fetch in enabled() runs without the lock held, so a
+// write can land while it is in flight. gen guards against that: invalidate()
+// bumps it, and publish() only commits its fetched snapshot if gen has not
+// moved since the fetch started. A discarded snapshot just means the next
+// call re-fetches; it never leaves stale data marked as loaded.
 type watchStore struct {
 	mu      sync.RWMutex
 	watches []Watch
 	loaded  bool
+	gen     uint64
 }
 
 var watchCache = &watchStore{}
@@ -114,6 +119,7 @@ func (s *watchStore) invalidate() {
 	defer s.mu.Unlock()
 	s.loaded = false
 	s.watches = nil
+	s.gen++
 }
 
 // enabled returns the enabled watches, loading them on first use and after any
@@ -127,6 +133,7 @@ func (s *watchStore) enabled(pg *postgres) []Watch {
 		s.mu.RUnlock()
 		return watches
 	}
+	gen := s.gen
 	s.mu.RUnlock()
 
 	all, err := listWatches(pg)
@@ -142,12 +149,23 @@ func (s *watchStore) enabled(pg *postgres) []Watch {
 		}
 	}
 
-	s.mu.Lock()
-	s.watches = enabled
-	s.loaded = true
-	s.mu.Unlock()
+	s.publish(enabled, gen)
 
 	return enabled
+}
+
+// publish commits a freshly fetched watch list to the cache, but only if no
+// invalidate() happened since the fetch started (gen unchanged). Otherwise the
+// snapshot predates a write and is discarded so the cache stays unloaded and
+// the next call re-fetches, rather than resurrecting stale data.
+func (s *watchStore) publish(watches []Watch, gen uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gen != gen {
+		return
+	}
+	s.watches = watches
+	s.loaded = true
 }
 
 // listWatches returns every watch with its conditions attached, newest first.
