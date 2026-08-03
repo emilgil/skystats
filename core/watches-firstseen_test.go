@@ -59,3 +59,24 @@ func TestFirstSeenTrackerReturnsEmptySetWhenNothingIsNew(t *testing.T) {
 		t.Errorf("got %d flagged hexes want 0", len(got))
 	}
 }
+
+func TestFirstSeenTrackerRefreshKeepsLongSightingFlagged(t *testing.T) {
+	tracker := newFirstSeenTracker()
+	now := time.Unix(1785399041, 0)
+	grace := 10 * time.Minute
+
+	// t0: aircraft appears, brand new.
+	tracker.update([]string{"aaa111"}, map[string]bool{"aaa111": true}, now, grace)
+
+	// t0+5min: still visible in snapshot, should refresh timestamp.
+	tracker.update([]string{"aaa111"}, nil, now.Add(5*time.Minute), grace)
+
+	// t0+14min: still visible in snapshot. Without the refresh loop, the
+	// hex timestamp would still be t0, making it 14 minutes old (> 10min grace),
+	// so it would expire. With the refresh loop, it's been refreshed to t0+5min,
+	// then t0+14min, staying within grace even as time advances.
+	got := tracker.update([]string{"aaa111"}, nil, now.Add(14*time.Minute), grace)
+	if !got["aaa111"] {
+		t.Error("a long-duration sighting should stay flagged if aircraft keeps appearing in snapshots")
+	}
+}

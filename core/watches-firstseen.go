@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -15,7 +16,16 @@ import (
 func markKnownAircraft(pg *postgres, hexes []string) map[string]bool {
 
 	brandNew := map[string]bool{}
-	if len(hexes) == 0 {
+
+	// Filter out empty/whitespace hexes to avoid junk rows in permanent table.
+	filtered := make([]string, 0, len(hexes))
+	for _, hex := range hexes {
+		if len(strings.TrimSpace(hex)) > 0 {
+			filtered = append(filtered, hex)
+		}
+	}
+
+	if len(filtered) == 0 {
 		return brandNew
 	}
 
@@ -23,7 +33,7 @@ func markKnownAircraft(pg *postgres, hexes []string) map[string]bool {
 		INSERT INTO known_aircraft (hex)
 		SELECT DISTINCT unnest($1::text[])
 		ON CONFLICT (hex) DO NOTHING
-		RETURNING hex`, hexes)
+		RETURNING hex`, filtered)
 	if err != nil {
 		log.Error().Err(err).Msg("markKnownAircraft() - insert failed")
 		return brandNew
@@ -53,6 +63,8 @@ func markKnownAircraft(pg *postgres, hexes []string) map[string]bool {
 // State is in-memory only. A daemon restart during an aircraft's very first
 // sighting loses the flag for that sighting; the permanent record in
 // known_aircraft is what prevents it from ever being flagged again.
+//
+// Not safe for concurrent use; must be called only from the ingest tick goroutine.
 type firstSeenTracker struct {
 	sessions map[string]time.Time
 }
