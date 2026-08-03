@@ -169,24 +169,6 @@ func TestBuildWatchSubjectFallsBackToDatabaseValues(t *testing.T) {
 	}
 }
 
-func TestBuildWatchSubjectCarriesThePhotoURL(t *testing.T) {
-	photo := "https://airport-data.com/images/aircraft/001/722/001722411.jpg"
-
-	s := buildWatchSubject(Aircraft{Hex: "461fa2"}, aircraftEnrichment{PhotoURL: strPtr(photo)}, 0, false, false)
-
-	if s.PhotoURL != photo {
-		t.Errorf("photo url: got %q want %q", s.PhotoURL, photo)
-	}
-}
-
-func TestBuildWatchSubjectLeavesThePhotoURLEmptyWhenAdsbdbHasNone(t *testing.T) {
-	s := buildWatchSubject(Aircraft{Hex: "461fa2"}, aircraftEnrichment{}, 0, false, false)
-
-	if s.PhotoURL != "" {
-		t.Errorf("photo url: got %q want empty so apprisePayload omits the attachment", s.PhotoURL)
-	}
-}
-
 func startedKeys(watchID, n int) []watchKey {
 	out := make([]watchKey, 0, n)
 	for i := 0; i < n; i++ {

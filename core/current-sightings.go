@@ -48,7 +48,6 @@ type aircraftEnrichment struct {
 	Manufacturer     *string
 	CountryName      *string
 	RegisteredOwner  *string
-	PhotoURL         *string
 	AirlineName      *string
 	AirlineIcao      *string
 	AirlineIata      *string
@@ -170,7 +169,6 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 		       reg.manufacturer,
 		       reg.registered_owner_country_name,
 		       reg.registered_owner,
-		       reg.url_photo,
 		       rt.airline_name,
 		       rt.airline_icao,
 		       rt.airline_iata,
@@ -218,7 +216,6 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 			&e.Manufacturer,
 			&e.CountryName,
 			&e.RegisteredOwner,
-			&e.PhotoURL,
 			&e.AirlineName,
 			&e.AirlineIcao,
 			&e.AirlineIata,
