@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
 
 export const watches = writable({ items: [], loading: true, error: null });
-export const watchFields = writable({ fields: [], operators: {} });
+export const watchFields = writable({ fields: [], operators: {}, loading: true, error: null });
 
 export async function loadWatches() {
     watches.update((s) => ({ ...s, loading: true, error: null }));
@@ -17,13 +17,15 @@ export async function loadWatches() {
 }
 
 export async function loadWatchFields() {
+    watchFields.update((s) => ({ ...s, loading: true, error: null }));
     try {
         const response = await fetch('/api/watches/fields');
         if (!response.ok) throw new Error('Failed to load watch fields');
         const data = await response.json();
-        watchFields.set({ fields: data.fields ?? [], operators: data.operators ?? {} });
+        watchFields.set({ fields: data.fields ?? [], operators: data.operators ?? {}, loading: false, error: null });
     } catch (error) {
         console.error('Failed to load watch fields:', error);
+        watchFields.set({ fields: [], operators: {}, loading: false, error: 'Could not load field metadata' });
     }
 }
 
