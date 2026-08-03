@@ -132,7 +132,35 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 
 	previous := activeMatchCache.snapshot()
 	started, ended := diffMatches(current, previous, now, watchMatchGrace)
-	activeMatchCache.apply(current, ended, now)
+
+	startedSet := make(map[watchKey]bool, len(started))
+	for _, key := range started {
+		startedSet[key] = true
+	}
+
+	// The cache must only ever reflect what Postgres actually holds, so it is
+	// built up from confirmed writes below rather than from `current`
+	// directly. Continuing matches (in current but not newly started) already
+	// have their row in Postgres from an earlier tick, so they are seeded in
+	// unconditionally; their timestamp is simply refreshed by apply().
+	//
+	// A started match is added only once its INSERT has succeeded, and only
+	// then is the notification fired. If the INSERT fails, the key is left
+	// out of both the cache and the notification for this tick: the next tick
+	// still finds it missing from the cache, so diffMatches reports it as
+	// started again and retries the INSERT. That is the only way to avoid
+	// notifying for a match Postgres never durably recorded, while never
+	// leaving a real match un-notified for good.
+	//
+	// Symmetrically, an ended match is only dropped from the cache once its
+	// DELETE has succeeded; a failed DELETE leaves the key exactly where it
+	// was, so the row (and the cache) still agree and the next tick retries.
+	persisted := make(map[watchKey]bool, len(current))
+	for key := range current {
+		if !startedSet[key] {
+			persisted[key] = true
+		}
+	}
 
 	watchByID := make(map[int]Watch, len(watches))
 	for _, w := range watches {
@@ -152,8 +180,10 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 			ON CONFLICT (watch_id, hex) DO NOTHING`, key.WatchID, key.Hex, now)
 		if err != nil {
 			log.Error().Err(err).Msgf("evaluateWatches() - unable to record match for watch %d / %s", key.WatchID, key.Hex)
+			continue
 		}
 
+		persisted[key] = true
 		log.Info().Msgf("Watch %q matched %s", w.Name, key.Hex)
 
 		if notifier != nil {
@@ -161,11 +191,16 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 		}
 	}
 
+	removed := make([]watchKey, 0, len(ended))
 	for _, key := range ended {
 		_, err := pg.db.Exec(context.Background(), `
 			DELETE FROM watch_active_matches WHERE watch_id = $1 AND hex = $2`, key.WatchID, key.Hex)
 		if err != nil {
 			log.Error().Err(err).Msgf("evaluateWatches() - unable to clear match for watch %d / %s", key.WatchID, key.Hex)
+			continue
 		}
+		removed = append(removed, key)
 	}
+
+	activeMatchCache.apply(persisted, removed, now)
 }

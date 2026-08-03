@@ -103,7 +103,7 @@ func TestBuildWatchSubjectPrefersLiveValuesOverDatabase(t *testing.T) {
 		OriginIata:   strPtr("ARN"),
 	}
 
-	s := buildWatchSubject(a, e, 42.5, true, false)
+	s := buildWatchSubject(a, e, 42.5, true, true)
 
 	if s.Registration != "SE-RTM" {
 		t.Errorf("registration: got %s want SE-RTM (live value wins)", s.Registration)
@@ -128,6 +128,15 @@ func TestBuildWatchSubjectPrefersLiveValuesOverDatabase(t *testing.T) {
 	}
 	if !s.HasAltitude || !s.HasSpeed || !s.HasPosition {
 		t.Errorf("presence flags wrong: %+v", s)
+	}
+	if s.DistanceKm != 42.5 {
+		t.Errorf("distance: got %v want 42.5 (the injected distanceKm argument)", s.DistanceKm)
+	}
+	if s.Squawk != "2000" {
+		t.Errorf("squawk: got %s want 2000 (a.Squawk)", s.Squawk)
+	}
+	if !s.FirstSeenEver {
+		t.Errorf("first seen ever: got false want true (the injected firstSeenEver argument)")
 	}
 }
 
