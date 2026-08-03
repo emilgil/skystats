@@ -176,3 +176,84 @@ func TestBuildWatchMessageMarksFirstEverSighting(t *testing.T) {
 		t.Errorf("body should flag a first-ever sighting:\n%s", body)
 	}
 }
+
+// attachRejectingServer stands in for the Apprise deployment observed in
+// production: it refuses any notification carrying an attachment with the same
+// 400 it returns for a dead image URL, and accepts the identical payload once
+// the attachment is dropped. It records every payload it saw.
+func attachRejectingServer(t *testing.T, alwaysFail bool) (*httptest.Server, *[]apprisePayload) {
+	t.Helper()
+	var seen []apprisePayload
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p apprisePayload
+		b, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Errorf("body not JSON: %v (%s)", err, b)
+		}
+		seen = append(seen, p)
+		if alwaysFail || p.Attach != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error": "Bad Attachment"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	return srv, &seen
+}
+
+func TestSendRetriesWithoutTheAttachmentWhenAppriseRejectsIt(t *testing.T) {
+	srv, seen := attachRejectingServer(t, false)
+	defer srv.Close()
+
+	n := &NotificationService{client: &http.Client{Timeout: 5 * time.Second}}
+	status, err := n.send(srv.URL, "skystats", apprisePayload{
+		Title: "T", Body: "B", Attach: "https://example.invalid/photo.jpg",
+	})
+
+	if err != nil {
+		t.Fatalf("the message should still be delivered without its picture, got error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d want 200", status)
+	}
+	if len(*seen) != 2 {
+		t.Fatalf("got %d requests want 2 (the rejected one, then the retry)", len(*seen))
+	}
+	if (*seen)[0].Attach == "" {
+		t.Error("the first attempt should have carried the attachment")
+	}
+	if (*seen)[1].Attach != "" {
+		t.Errorf("the retry must drop the attachment, got %q", (*seen)[1].Attach)
+	}
+	if (*seen)[1].Title != "T" || (*seen)[1].Body != "B" {
+		t.Errorf("the retry must keep title and body, got %q / %q", (*seen)[1].Title, (*seen)[1].Body)
+	}
+}
+
+func TestSendDoesNotRetryWhenThereWasNoAttachment(t *testing.T) {
+	srv, seen := attachRejectingServer(t, true)
+	defer srv.Close()
+
+	n := &NotificationService{client: &http.Client{Timeout: 5 * time.Second}}
+	if _, err := n.send(srv.URL, "skystats", apprisePayload{Title: "T", Body: "B"}); err == nil {
+		t.Error("a 400 with nothing to drop is a real failure and must be reported")
+	}
+	if len(*seen) != 1 {
+		t.Errorf("got %d requests want 1 — there is nothing to retry without", len(*seen))
+	}
+}
+
+func TestSendReportsFailureWhenTheRetryAlsoFails(t *testing.T) {
+	srv, seen := attachRejectingServer(t, true)
+	defer srv.Close()
+
+	n := &NotificationService{client: &http.Client{Timeout: 5 * time.Second}}
+	if _, err := n.send(srv.URL, "skystats", apprisePayload{
+		Title: "T", Body: "B", Attach: "https://example.invalid/photo.jpg",
+	}); err == nil {
+		t.Error("expected an error when the attachment was not the problem")
+	}
+	if len(*seen) != 2 {
+		t.Errorf("got %d requests want 2 — one retry, not a loop", len(*seen))
+	}
+}

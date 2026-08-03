@@ -119,7 +119,27 @@ func (n *NotificationService) loadConfig() NotificationConfig {
 
 // send POSTs a payload to {apiURL}/notify/{key}. Returns the HTTP status (0 if
 // no response) and an error on failure.
+//
+// When the payload carries an attachment and Apprise answers 400, the
+// attachment is dropped and the message is sent once more. Apprise refuses the
+// whole notification rather than delivering the text alone whenever it cannot
+// use the attachment — an unreachable image URL, or a deployment with
+// attachments switched off, both surface as "Bad Attachment". The picture is
+// decoration; losing the alert over it is not acceptable, so it is better to
+// arrive without one. Only one retry, and only when there is something to drop.
 func (n *NotificationService) send(apiURL, key string, p apprisePayload) (int, error) {
+	status, err := n.post(apiURL, key, p)
+	if err == nil || status != http.StatusBadRequest || p.Attach == "" {
+		return status, err
+	}
+
+	log.Warn().Msgf("Apprise rejected the attachment %q with status 400; resending without it", p.Attach)
+	p.Attach = ""
+	return n.post(apiURL, key, p)
+}
+
+// post performs one POST of the payload, with no retry.
+func (n *NotificationService) post(apiURL, key string, p apprisePayload) (int, error) {
 	apiURL = strings.TrimRight(apiURL, "/")
 	if apiURL == "" || key == "" {
 		return 0, fmt.Errorf("apprise api url or config key not set")
