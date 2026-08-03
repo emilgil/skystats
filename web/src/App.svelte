@@ -7,6 +7,7 @@
   import TabInterestingStats from './components/TabInterestingStats.svelte';
   import TabActivity from './components/TabActivity.svelte';
   import TabCurrentSightings from './components/TabCurrentSightings.svelte';
+  import TabWatches from './components/TabWatches.svelte';
   import Footer from './components/Footer.svelte';
   import Settings from './components/Settings.svelte';
   import HideableCard from './components/HideableCard.svelte';
@@ -20,7 +21,8 @@
     { name: 'activity', label: 'Activity', component: TabActivity },
     { name: 'route-stat', label: 'Route Information', component: TabRouteStats },
     { name: 'interesting-stat', label: 'Interesting Aircraft', component: TabInterestingStats },
-    { name: 'motion-stat', label: 'Record Holders', component: TabMotionStats }
+    { name: 'motion-stat', label: 'Record Holders', component: TabMotionStats },
+    { name: 'watches', label: 'Watches', component: TabWatches }
   ];
 
   function setActiveTab(tabName) {

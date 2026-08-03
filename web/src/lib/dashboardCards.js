@@ -28,6 +28,9 @@ import MotionFurthestFlownAircraft from '../components/MotionFurthestFlownAircra
 import MotionMostRemainingAircraft from '../components/MotionMostRemainingAircraft.svelte';
 import MotionLongestRouteAircraft from '../components/MotionLongestRouteAircraft.svelte';
 
+import WatchList from '../components/WatchList.svelte';
+import WatchHits from '../components/WatchHits.svelte';
+
 export const dashboardCards = [
     { id: 'above_timeline', title: 'Above Me', tab: 'global', component: AboveTimeline },
     { id: 'current_sightings', title: 'Current Sightings', tab: 'current-stat', component: CurrentSightings },
@@ -58,5 +61,8 @@ export const dashboardCards = [
     { id: 'motion_lowest', title: 'Lowest Aircraft', tab: 'motion-stat', component: MotionLowestAircraft },
     { id: 'motion_furthest_flown', title: 'Furthest Flown', tab: 'motion-stat', component: MotionFurthestFlownAircraft },
     { id: 'motion_most_remaining', title: 'Most Remaining', tab: 'motion-stat', component: MotionMostRemainingAircraft },
-    { id: 'motion_longest_route', title: 'Longest Route', tab: 'motion-stat', component: MotionLongestRouteAircraft }
+    { id: 'motion_longest_route', title: 'Longest Route', tab: 'motion-stat', component: MotionLongestRouteAircraft },
+
+    { id: 'watch_list', title: 'Watches', tab: 'watches', component: WatchList },
+    { id: 'watch_hits', title: 'Watch Hits', tab: 'watches', component: WatchHits }
 ];

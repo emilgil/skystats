@@ -10,9 +10,10 @@
         activity: 'Activity',
         'route-stat': 'Route Information',
         'interesting-stat': 'Interesting Aircraft',
-        'motion-stat': 'Record Holders'
+        'motion-stat': 'Record Holders',
+        watches: 'Watches'
     };
-    const cardTabOrder = ['global', 'current-stat', 'activity', 'route-stat', 'interesting-stat', 'motion-stat'];
+    const cardTabOrder = ['global', 'current-stat', 'activity', 'route-stat', 'interesting-stat', 'motion-stat', 'watches'];
 
     function toggleCardVisibility(cardId, visible) {
         if (visible) {
