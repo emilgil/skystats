@@ -131,3 +131,48 @@ func TestSendRejectsMissingConfig(t *testing.T) {
 		t.Error("expected error for empty key")
 	}
 }
+
+func TestBuildWatchMessageUsesRegistrationInTheTitle(t *testing.T) {
+	s := watchSubject{
+		Hex: "4ca7b5", Callsign: "SAS1234", Registration: "SE-RTM", TypeCode: "B38M",
+		Model: "Boeing 737 MAX 8", Airline: "Scandinavian Airlines",
+		Origin: []string{"ESSA", "ARN"}, Destination: []string{"EKCH", "CPH"},
+		AltitudeFt: 31000, HasAltitude: true, SpeedKt: 450, HasSpeed: true,
+		DistanceKm: 42.5, HasPosition: true, Squawk: "2000",
+	}
+
+	title, body := buildWatchMessage("Boeing close by", s)
+
+	if !strings.Contains(title, "Boeing close by") {
+		t.Errorf("title should name the watch, got %q", title)
+	}
+	if !strings.Contains(title, "SE-RTM") {
+		t.Errorf("title should identify the aircraft, got %q", title)
+	}
+	for _, want := range []string{"SAS1234", "B38M", "Boeing 737 MAX 8", "Scandinavian Airlines", "ARN", "CPH", "31000", "450", "42", "2000"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildWatchMessageFallsBackToHexAndOmitsMissingData(t *testing.T) {
+	title, body := buildWatchMessage("Anything", watchSubject{Hex: "4ca7b5"})
+
+	if !strings.Contains(title, "4ca7b5") {
+		t.Errorf("title should fall back to the hex, got %q", title)
+	}
+	for _, unwanted := range []string{"Altitude", "Speed", "Distance", "Route", "Squawk"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("body should omit %q when there is no data:\n%s", unwanted, body)
+		}
+	}
+}
+
+func TestBuildWatchMessageMarksFirstEverSighting(t *testing.T) {
+	_, body := buildWatchMessage("New aircraft", watchSubject{Hex: "4ca7b5", FirstSeenEver: true})
+
+	if !strings.Contains(body, "First time") {
+		t.Errorf("body should flag a first-ever sighting:\n%s", body)
+	}
+}

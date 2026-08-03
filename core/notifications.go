@@ -342,3 +342,112 @@ func (n *NotificationService) SendTest(apiURL, key string) error {
 	n.logAttempt("test", "", "", nil, nil, "✈️ Skystats test", "This is a test notification from Skystats.", key, status, httpStatus, errMsg)
 	return err
 }
+
+// buildWatchMessage returns (title, body) for an aircraft that has started
+// matching a watch. Fields with no data are omitted rather than shown empty.
+func buildWatchMessage(watchName string, s watchSubject) (string, string) {
+
+	name := firstNonEmpty(s.Registration, strings.TrimSpace(s.Callsign), s.Hex)
+	title := fmt.Sprintf("👁 Watch \"%s\": %s", watchName, name)
+
+	var b strings.Builder
+	if f := strings.TrimSpace(s.Callsign); f != "" {
+		fmt.Fprintf(&b, "Callsign: %s\n", f)
+	}
+	if s.TypeCode != "" {
+		fmt.Fprintf(&b, "Type: %s\n", s.TypeCode)
+	}
+	if s.Model != "" {
+		fmt.Fprintf(&b, "Model: %s\n", s.Model)
+	}
+	if s.Registration != "" {
+		fmt.Fprintf(&b, "Registration: %s\n", s.Registration)
+	}
+	if s.Airline != "" {
+		fmt.Fprintf(&b, "Airline: %s\n", s.Airline)
+	}
+	if len(s.Origin) > 0 && len(s.Destination) > 0 {
+		fmt.Fprintf(&b, "Route: %s → %s\n", s.Origin[len(s.Origin)-1], s.Destination[len(s.Destination)-1])
+	}
+	if s.HasAltitude {
+		fmt.Fprintf(&b, "Altitude: %s ft\n", formatMetric(s.AltitudeFt))
+	}
+	if s.HasSpeed {
+		fmt.Fprintf(&b, "Speed: %s kt\n", formatMetric(s.SpeedKt))
+	}
+	if s.HasPosition {
+		fmt.Fprintf(&b, "Distance: %s km\n", formatMetric(s.DistanceKm))
+	}
+	if s.Squawk != "" {
+		fmt.Fprintf(&b, "Squawk: %s\n", s.Squawk)
+	}
+	if s.FirstSeenEver {
+		fmt.Fprintf(&b, "First time ever seen\n")
+	}
+
+	return title, strings.TrimRight(b.String(), "\n")
+}
+
+// NotifyWatch sends the Apprise notification for a watch match and records the
+// hit. The history row is written whether or not sending is enabled or
+// succeeds, so the Watches tab shows hits even without Apprise configured.
+func (n *NotificationService) NotifyWatch(w Watch, s watchSubject) {
+
+	title, body := buildWatchMessage(w.Name, s)
+
+	snapshot, err := json.Marshal(map[string]any{
+		"callsign":          s.Callsign,
+		"registration":      s.Registration,
+		"type_code":         s.TypeCode,
+		"model":             s.Model,
+		"manufacturer":      s.Manufacturer,
+		"country":           s.Country,
+		"airline":           s.Airline,
+		"origin":            s.Origin,
+		"destination":       s.Destination,
+		"squawk":            s.Squawk,
+		"altitude_ft":       s.AltitudeFt,
+		"speed_kt":          s.SpeedKt,
+		"distance_km":       s.DistanceKm,
+		"vertical_rate_fpm": s.VerticalRateFpm,
+		"first_seen_ever":   s.FirstSeenEver,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("NotifyWatch() - unable to marshal snapshot")
+		snapshot = []byte("{}")
+	}
+
+	cfg := n.loadConfig()
+	success, sendError := false, ""
+
+	switch {
+	case !cfg.Enabled:
+		sendError = "notifications are disabled"
+	case cfg.APIURL == "":
+		sendError = "apprise api url is not set"
+	default:
+		key := strings.TrimSpace(w.AppriseKey)
+		if key == "" {
+			key = cfg.ConfigKey
+		}
+		if key == "" {
+			sendError = "apprise config key is not set"
+			break
+		}
+		if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
+			sendError = err.Error()
+			log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
+		} else {
+			success = true
+		}
+	}
+
+	_, err = n.pg.db.Exec(context.Background(), `
+		INSERT INTO watch_notifications
+			(watch_id, watch_name, hex, flight, registration, snapshot, apprise_success, apprise_error)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, NULLIF($8, ''))`,
+		w.ID, w.Name, s.Hex, strings.TrimSpace(s.Callsign), s.Registration, snapshot, success, sendError)
+	if err != nil {
+		log.Error().Err(err).Msg("NotifyWatch() - failed to write watch_notifications")
+	}
+}
