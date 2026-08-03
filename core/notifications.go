@@ -31,6 +31,10 @@ type NotificationService struct {
 	// It is nil in tests that build the service directly; a nil semaphore just
 	// means unbounded, which is what a single-shot unit test wants.
 	watchSends chan struct{}
+
+	// photos resolves the attachment picture. Nil in tests that build the
+	// service directly, which then simply send without one.
+	photos *photoLookup
 }
 
 func NewNotificationService(pg *postgres) *NotificationService {
@@ -38,7 +42,17 @@ func NewNotificationService(pg *postgres) *NotificationService {
 		pg:         pg,
 		client:     &http.Client{Timeout: 5 * time.Second},
 		watchSends: make(chan struct{}, watchSendConcurrency),
+		photos:     newPhotoLookup(),
 	}
+}
+
+// photoURL resolves an attachment photo for hex, or "" when there is none or
+// the service was built without a lookup.
+func (n *NotificationService) photoURL(hex string) string {
+	if n.photos == nil {
+		return ""
+	}
+	return n.photos.photoURL(hex)
 }
 
 // NotificationConfig is a snapshot of the notification-related user_settings.
@@ -322,6 +336,13 @@ func (n *NotificationService) NotifyBatch(aircraft []InterestingAircraft) {
 		}
 		from, to := n.lookupRoute(strings.TrimSpace(a.Flight))
 		title, body, attach := buildInterestingMessage(a, dist, from, to)
+		// Planespotters wins over the picture stored with the plane-alert entry.
+		// Those are cdn.jetphotos.com URLs that answer a server-side fetch with
+		// 403, so Apprise cannot attach them; the stored one is kept only as a
+		// fallback for the aircraft Planespotters has never seen.
+		if photo := n.photoURL(a.Hex); photo != "" {
+			attach = photo
+		}
 		httpStatus, sendErr := n.send(cfg.APIURL, cfg.ConfigKey, apprisePayload{Body: body, Title: title, Attach: attach})
 		status, errMsg := "sent", ""
 		if sendErr != nil {
@@ -502,8 +523,12 @@ func (n *NotificationService) NotifyWatch(cfg NotificationConfig, w Watch, s wat
 		return
 	}
 
+	// Looked up only once the message is definitely going out — a suppressed or
+	// disabled notification has no reason to reach across the network.
+	attach := n.photoURL(s.Hex)
+
 	success := false
-	if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
+	if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body, Attach: attach}); err != nil {
 		sendError = err.Error()
 		log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
 	} else {

@@ -68,6 +68,12 @@ Matching runs against the live readsb snapshot rather than `aircraft_data`: `squ
 
 One accepted limitation: `HasSpeed` is derived from `a.Gs != 0`, and readsb omits `gs` entirely when it has no value, so an aircraft genuinely reporting 0 kt is treated as having no speed data — a "ground speed under N" watch will not match a stationary aircraft. This was kept rather than reworking the shared `Aircraft` model, since it errs toward not matching, which is the safer direction.
 
+### Notification photos
+
+Watch and interesting-aircraft notifications attach a picture resolved by `photos.go` from the Planespotters public API, keyed by ICAO hex, cached in memory (24h for a hit, 6h for a miss). Neither photo URL already in the database is usable as an attachment: adsbdb's `registration_data.url_photo` points at airport-data.com paths that now 404 wholesale, and `interesting_aircraft.image_link_1` points at cdn.jetphotos.com, which answers a server-side fetch with 403. The stored interesting link is kept only as a fallback for airframes Planespotters has never seen.
+
+Two things make this fragile enough to be worth knowing. Planespotters refuses some generic library User-Agents, and it signals the refusal with HTTP 200 plus an `error` field — indistinguishable from "no photo" unless you read that field, which `fetch` does and logs. And Apprise fails closed on an attachment it cannot fetch: it drops the whole notification with a 400 rather than delivering the text alone. `send` therefore retries once without the attachment on a 400, so a bad picture can never swallow the alert it was meant to illustrate.
+
 ### Database
 
 - Runtime queries use pgx (`db-connector.go`); migrations use golang-migrate with `lib/pq`, reading SQL files from `migrations/` (`db-migrations.go`).
