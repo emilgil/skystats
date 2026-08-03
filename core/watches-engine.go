@@ -14,6 +14,17 @@ import (
 // occasional tick where readsb drops an aircraft from the feed.
 const watchMatchGrace = 10 * time.Minute
 
+// watchMatchRefreshTicks is how many ingest ticks pass between refreshes of the
+// matched_at column. At the 2s tick that is one minute — comfortably shorter
+// than watchMatchGrace, so a match that is still live when the daemon stops is
+// never mistaken on restart for one that expired while it was down.
+const watchMatchRefreshTicks = 30
+
+// watchTickCount drives the periodic matched_at refresh. evaluateWatches runs
+// only on the single ingest-tick goroutine, so a plain counter is enough and no
+// second ticker is needed.
+var watchTickCount int
+
 // diffMatches compares this tick's match set against the previous state.
 // started is everything newly matching (one notification each); ended is
 // everything that has not been re-confirmed within grace.
@@ -82,7 +93,34 @@ func nonEmptyValues(values ...string) []string {
 // initWatchEngine primes the in-memory match state from Postgres so a restart
 // does not re-notify for aircraft that were already matching.
 func initWatchEngine(pg *postgres) {
-	activeMatchCache.load(pg, time.Now())
+	activeMatchCache.load(pg, time.Now(), watchMatchGrace)
+}
+
+// refreshMatchTimestamps stamps every still-matching key as confirmed now, in
+// one statement, so matched_at in Postgres is a genuine last-seen time rather
+// than the moment the match first started. load() depends on that to tell a
+// live match from one that ended during downtime.
+func refreshMatchTimestamps(pg *postgres, keys map[watchKey]bool, now time.Time) {
+
+	if len(keys) == 0 {
+		return
+	}
+
+	watchIDs := make([]int32, 0, len(keys))
+	hexes := make([]string, 0, len(keys))
+	for key := range keys {
+		watchIDs = append(watchIDs, int32(key.WatchID))
+		hexes = append(hexes, key.Hex)
+	}
+
+	_, err := pg.db.Exec(context.Background(), `
+		UPDATE watch_active_matches m
+		SET matched_at = $1
+		FROM unnest($2::int[], $3::text[]) AS k(watch_id, hex)
+		WHERE m.watch_id = k.watch_id AND m.hex = k.hex`, now, watchIDs, hexes)
+	if err != nil {
+		log.Error().Err(err).Msg("evaluateWatches() - unable to refresh match timestamps")
+	}
 }
 
 // firstSeen is the process-wide first-sighting tracker, driven by the ingest
@@ -130,7 +168,7 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 		}
 	}
 
-	previous := activeMatchCache.snapshot()
+	previous := activeMatchCache.begin()
 	started, ended := diffMatches(current, previous, now, watchMatchGrace)
 
 	startedSet := make(map[watchKey]bool, len(started))
@@ -200,6 +238,11 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 			continue
 		}
 		removed = append(removed, key)
+	}
+
+	watchTickCount++
+	if watchTickCount%watchMatchRefreshTicks == 0 {
+		refreshMatchTimestamps(pg, persisted, now)
 	}
 
 	activeMatchCache.apply(persisted, removed, now)

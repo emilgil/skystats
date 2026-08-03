@@ -17,22 +17,41 @@ type watchKey struct {
 }
 
 // activeMatchStore mirrors watch_active_matches in memory so the 2s tick can
-// diff without a round trip. Postgres stays the durable record; the last-seen
-// timestamps are in-memory only and reset to "now" on restart, which just gives
-// every loaded match a fresh grace window.
+// diff without a round trip. Postgres stays the durable record and its
+// matched_at column is a real last-confirmed timestamp — evaluateWatches
+// refreshes it periodically — so a restart can tell a match that was still live
+// when the daemon went down from one that expired while it was down.
+//
+// gen is the per-watch generation guard, mirroring watchStore.gen: forget()
+// bumps a watch's generation, begin() records the generations one tick starts
+// from, and apply() refuses to write back keys whose watch has moved on since.
+// Without it a forget() landing between begin() and apply() would be undone by
+// apply() re-inserting continuing matches the transaction had just deleted, and
+// the edited watch's aircraft would never get its promised fresh notification.
+// The captured generations live on the store rather than being passed back in
+// so that begin() and apply() read them under the same mutex; evaluateWatches
+// is the only caller and runs on the single ingest-tick goroutine, so exactly
+// one begin()/apply() pair is ever in flight.
 type activeMatchStore struct {
 	mu      sync.Mutex
 	matches map[watchKey]time.Time
+	gen     map[int]uint64
+	tickGen map[int]uint64
 }
 
 func newActiveMatchStore() *activeMatchStore {
-	return &activeMatchStore{matches: map[watchKey]time.Time{}}
+	return &activeMatchStore{
+		matches: map[watchKey]time.Time{},
+		gen:     map[int]uint64{},
+		tickGen: map[int]uint64{},
+	}
 }
 
 var activeMatchCache = newActiveMatchStore()
 
 // forget drops every cached match for a watch, so a rewritten or deleted watch
-// cannot leave stale state behind.
+// cannot leave stale state behind, and bumps that watch's generation so a tick
+// already in flight cannot put the keys back.
 func (s *activeMatchStore) forget(watchID int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -41,29 +60,78 @@ func (s *activeMatchStore) forget(watchID int) {
 			delete(s.matches, key)
 		}
 	}
+	if s.gen == nil {
+		s.gen = map[int]uint64{}
+	}
+	s.gen[watchID]++
 }
 
-// load replaces the cache from Postgres at startup.
-func (s *activeMatchStore) load(pg *postgres, now time.Time) {
+// loadedMatch is one watch_active_matches row as read at startup.
+type loadedMatch struct {
+	Key       watchKey
+	MatchedAt time.Time
+}
 
-	rows, err := pg.db.Query(context.Background(), `SELECT watch_id, hex FROM watch_active_matches`)
+// partitionLoadedMatches splits the persisted matches into those still inside
+// the grace window — which keep their real matched_at, so a match that was live
+// when the daemon stopped is not re-notified — and those whose last
+// confirmation is older than the window. The latter represent matches that
+// ended while the daemon was down: they must not seed the cache, or the
+// aircraft's next sighting would be silently swallowed as "already matching".
+func partitionLoadedMatches(rows []loadedMatch, now time.Time, grace time.Duration) (map[watchKey]time.Time, []watchKey) {
+
+	active := make(map[watchKey]time.Time, len(rows))
+	var expired []watchKey
+
+	for _, row := range rows {
+		if now.Sub(row.MatchedAt) > grace {
+			expired = append(expired, row.Key)
+			continue
+		}
+		active[row.Key] = row.MatchedAt
+	}
+
+	return active, expired
+}
+
+// load replaces the cache from Postgres at startup, dropping matches that
+// expired while the daemon was down and deleting their rows so table and cache
+// stay in step.
+func (s *activeMatchStore) load(pg *postgres, now time.Time, grace time.Duration) {
+
+	rows, err := pg.db.Query(context.Background(), `SELECT watch_id, hex, matched_at FROM watch_active_matches`)
 	if err != nil {
 		log.Error().Err(err).Msg("activeMatchStore.load() - query failed")
 		return
 	}
 	defer rows.Close()
 
-	loaded := map[watchKey]time.Time{}
+	persisted := []loadedMatch{}
 	for rows.Next() {
-		var key watchKey
-		if err := rows.Scan(&key.WatchID, &key.Hex); err != nil {
+		var row loadedMatch
+		if err := rows.Scan(&row.Key.WatchID, &row.Key.Hex, &row.MatchedAt); err != nil {
 			log.Error().Err(err).Msg("activeMatchStore.load() - error scanning rows")
 			continue
 		}
-		loaded[key] = now
+		persisted = append(persisted, row)
 	}
 	if err := rows.Err(); err != nil {
 		log.Error().Err(err).Msg("activeMatchStore.load() - row iteration failed")
+	}
+	rows.Close()
+
+	loaded, expired := partitionLoadedMatches(persisted, now, grace)
+
+	if len(expired) > 0 {
+		// now.Sub(matched_at) > grace is exactly matched_at < now-grace, so one
+		// statement clears precisely the rows partitionLoadedMatches dropped.
+		cutoff := now.Add(-grace)
+		if _, err := pg.db.Exec(context.Background(),
+			`DELETE FROM watch_active_matches WHERE matched_at < $1`, cutoff); err != nil {
+			log.Error().Err(err).Msg("activeMatchStore.load() - unable to clear expired matches")
+		} else {
+			log.Info().Msgf("Dropped %d watch matches that expired while the daemon was down", len(expired))
+		}
 	}
 
 	s.mu.Lock()
@@ -73,7 +141,26 @@ func (s *activeMatchStore) load(pg *postgres, now time.Time) {
 	log.Debug().Msgf("Loaded %d active watch matches", len(loaded))
 }
 
-// snapshot returns a copy of the current match state.
+// begin opens a tick: it returns a copy of the current match state and records
+// the per-watch generations that state was taken at, so the matching apply()
+// can tell whether a forget() landed in between.
+func (s *activeMatchStore) begin() map[watchKey]time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.tickGen = make(map[int]uint64, len(s.gen))
+	for id, g := range s.gen {
+		s.tickGen[id] = g
+	}
+
+	out := make(map[watchKey]time.Time, len(s.matches))
+	for k, v := range s.matches {
+		out[k] = v
+	}
+	return out
+}
+
+// snapshot returns a copy of the current match state without opening a tick.
 func (s *activeMatchStore) snapshot() map[watchKey]time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -85,11 +172,17 @@ func (s *activeMatchStore) snapshot() map[watchKey]time.Time {
 }
 
 // apply folds one tick's outcome into the cache: everything still matching gets
-// its timestamp refreshed, everything ended is dropped.
+// its timestamp refreshed, everything ended is dropped. Keys belonging to a
+// watch that was forgotten since begin() are skipped entirely — that watch's
+// rows are gone from Postgres, so caching them would leave the two disagreeing
+// for the whole grace window.
 func (s *activeMatchStore) apply(current map[watchKey]bool, ended []watchKey, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key := range current {
+		if s.gen[key.WatchID] != s.tickGen[key.WatchID] {
+			continue
+		}
 		s.matches[key] = now
 	}
 	for _, key := range ended {
