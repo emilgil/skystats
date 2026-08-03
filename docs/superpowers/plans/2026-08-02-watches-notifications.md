@@ -3282,6 +3282,6 @@ Do **not** deploy to 192.168.1.251 as part of this plan. Summarise for the user:
 
 **Two spec assumptions that the codebase contradicted**, resolved as follows:
 
-1. The spec suggested matching against recently-updated `aircraft_data` rows. That table never stores `squawk` or `baro_rate` (`insertNewAircrafts` omits both columns), and its `alt_baro`/`gs` columns hold the session **maximum**, not the current value. Matching therefore runs against the live readsb snapshot, which carries all of them, with Postgres used only for enrichment that the feed does not provide.
+1. The spec suggested matching against recently-updated `aircraft_data` rows. That table never stores `squawk` at all, and `baro_rate` is written only by `insertNewAircrafts` on first insert — `updateExistingAircrafts` never touches it again, so like `alt_baro`/`gs` (which `updateExistingAircrafts` only ever raises to the session **maximum**, never lowers) it reflects a moment in the past, not the current value. Matching therefore runs against the live readsb snapshot, which carries all of them, with Postgres used only for enrichment that the feed does not provide.
 
 2. The spec asked whether `flight_history` could back "first time ever seen". It cannot: `runHistoryRetention` prunes it on a `history_retention_days` setting (default 730). Hence the separate never-pruned `known_aircraft` table, backfilled from `aircraft_data` in the migration.
