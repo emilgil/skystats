@@ -10,7 +10,8 @@
 
 ## Global Constraints
 
-- Module root is the repo root (`go.mod` at `/mnt/c/temp/github/claude/skystats/go.mod`, module `github.com/tomcarman/skystats`). Build/test from the repo root: `go build ./...`, `go test ./...`. Local Go is at `~/.local/go/bin/go` on the WSL box — ensure it is on PATH or use the full path.
+- **All work happens in the worktree at `/mnt/c/temp/github/claude/skystats-watches`, on branch `feat/watches`.** It already exists — never create a branch or worktree, and never touch `/mnt/c/temp/github/claude/skystats` (another session owns it). Use absolute paths: the shell's working directory resets between commands on this box.
+- Module root is the worktree root (`go.mod` at `/mnt/c/temp/github/claude/skystats-watches/go.mod`, module `github.com/tomcarman/skystats`). Build/test from that root: `go build ./...`, `go test ./...`. Local Go is at `~/.local/go/bin/go` — prepend `export PATH="$HOME/.local/go/bin:$PATH"` to shell commands.
 - All Go code for this feature lives in package `main` in `core/`.
 - **UI language is English** (decided with the user): the tab is `Watches`, not "Bevakningar". All user-visible strings in this feature are English, matching `Current Sightings` / `Record Holders` / `Interesting Aircraft`.
 - **Deleting a watch keeps its notification history** (decided with the user): `watch_notifications.watch_id` is `ON DELETE SET NULL` and every row also stores `watch_name` as text so history stays readable.
@@ -21,8 +22,8 @@
 - Missing data never matches: a condition whose subject value is absent evaluates to `false`, never `true` and never an error.
 - A watch with zero conditions never matches, for both `AND` and `OR`. The API rejects saving one.
 - Watch notifications are gated by the existing global `notifications_enabled` setting plus `apprise_api_url` / `apprise_config_key`. The **history row is always written** even when sending is off, so the Watches tab shows hits without Apprise configured.
-- This repo has no DB/HTTP/Svelte test harness. Pure Go logic is unit-tested with `go test ./...`; DB/API/frontend tasks are verified by a successful `go build ./...` + `cd web && npm run build`, then the deploy-and-observe protocol in Task 12.
-- Do not commit to `main` directly. Task 1 creates the branch `feat/watches`; every task commits to it.
+- This repo has no DB/HTTP/Svelte test harness. Pure Go logic is unit-tested with `go test ./...`; DB/API/frontend tasks are verified by a successful `go build ./...` + `npm run build` in `web/`, then the deploy-and-observe protocol in Task 12.
+- Every task ends with a commit whose tree builds and passes `go test ./...`. No task may commit code that does not compile.
 
 ---
 
@@ -36,12 +37,12 @@
 - Consumes: nothing.
 - Produces: tables `watches`, `watch_conditions`, `watch_active_matches`, `watch_notifications`, `known_aircraft`. All later tasks read/write these.
 
-- [ ] **Step 1: Create the feature branch**
+- [ ] **Step 1: Confirm the workspace**
 
-```bash
-cd /mnt/c/temp/github/claude/skystats
-git checkout -b feat/watches
-```
+The branch and worktree already exist — do not create either. All work happens in the worktree at `/mnt/c/temp/github/claude/skystats-watches` on branch `feat/watches`.
+
+Run: `git -C /mnt/c/temp/github/claude/skystats-watches branch --show-current`
+Expected: `feat/watches`.
 
 - [ ] **Step 2: Confirm 000015 is really the next free number**
 
@@ -948,7 +949,7 @@ In `core/aircraft.go`, replace lines 54-55 (`pg.updateDatabase(...)` and `refres
 	refreshCurrentSightings(response.Now, aircraftsInRange, enrichment)
 ```
 
-(The watch engine call is added to this same spot in Task 6.)
+(The watch engine call is added to this same spot in Task 7.)
 
 - [ ] **Step 5: Build and run the existing tests**
 
@@ -974,7 +975,7 @@ git commit -m "refactor: widen per-tick enrichment and share it across snapshot 
 
 **Interfaces:**
 - Consumes: `known_aircraft` from Task 1.
-- Produces (used by Task 6):
+- Produces (used by Task 7):
   - `func markKnownAircraft(pg *postgres, hexes []string) map[string]bool`
   - `type firstSeenTracker struct { sessions map[string]time.Time }`
   - `func newFirstSeenTracker() *firstSeenTracker`
@@ -1163,14 +1164,17 @@ git commit -m "feat: permanent known_aircraft archive and first-sighting trackin
 
 ---
 
-### Task 5: Watch store — load, cache and persist watch definitions
+### Task 5: Watch store — watch definitions and active-match state
+
+Both caches live here: the watch definitions the tick reads, and the active-match state the tick diffs against. They belong together because the write path has to touch both — rewriting a watch's conditions must clear its matches.
 
 **Files:**
 - Create: `core/watches-store.go`
+- Test: `core/watches-store_test.go`
 
 **Interfaces:**
-- Consumes: `Watch`, `WatchCondition` from Task 2; the `watches` / `watch_conditions` tables from Task 1.
-- Produces (used by Tasks 6, 8):
+- Consumes: `Watch`, `WatchCondition` from Task 2; the `watches` / `watch_conditions` / `watch_active_matches` tables from Task 1.
+- Produces (used by Tasks 7, 8):
   - `var watchCache = &watchStore{}`
   - `func (s *watchStore) enabled(pg *postgres) []Watch` — cached read of enabled watches
   - `func (s *watchStore) invalidate()`
@@ -1179,10 +1183,90 @@ git commit -m "feat: permanent known_aircraft archive and first-sighting trackin
   - `func createWatch(pg *postgres, w Watch) (*Watch, error)`
   - `func updateWatch(pg *postgres, id int, w Watch) (*Watch, error)`
   - `func deleteWatch(pg *postgres, id int) error`
+  - `type watchKey struct { WatchID int; Hex string }`
+  - `var activeMatchCache = newActiveMatchStore()`
+  - `func newActiveMatchStore() *activeMatchStore`
+  - `func (s *activeMatchStore) forget(watchID int)`
+  - `func (s *activeMatchStore) load(pg *postgres, now time.Time)`
+  - `func (s *activeMatchStore) snapshot() map[watchKey]time.Time`
+  - `func (s *activeMatchStore) apply(current map[watchKey]bool, ended []watchKey, now time.Time)`
 
-- [ ] **Step 1: Write the implementation**
+- [ ] **Step 1: Write the failing test**
 
-There is no DB test harness in this repo, so this task has no unit test; it is verified by `go build` plus the runtime check in Task 12.
+The database paths have no test harness in this repo and are verified by `go build` plus the runtime check in Task 12. The in-memory match cache is pure and is tested.
+
+Create `core/watches-store_test.go`:
+
+```go
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+func TestActiveMatchStoreApplyRefreshesAndRemoves(t *testing.T) {
+	store := newActiveMatchStore()
+	now := time.Unix(1785399041, 0)
+
+	store.apply(map[watchKey]bool{
+		{WatchID: 1, Hex: "aaa111"}: true,
+		{WatchID: 1, Hex: "bbb222"}: true,
+	}, nil, now)
+
+	later := now.Add(time.Minute)
+	store.apply(map[watchKey]bool{{WatchID: 1, Hex: "aaa111"}: true},
+		[]watchKey{{WatchID: 1, Hex: "bbb222"}}, later)
+
+	got := store.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("got %d matches want 1", len(got))
+	}
+	if ts, ok := got[watchKey{WatchID: 1, Hex: "aaa111"}]; !ok || !ts.Equal(later) {
+		t.Errorf("aaa111 should be present with the refreshed timestamp, got %v (present=%v)", ts, ok)
+	}
+}
+
+func TestActiveMatchStoreSnapshotIsACopy(t *testing.T) {
+	store := newActiveMatchStore()
+	now := time.Unix(1785399041, 0)
+	store.apply(map[watchKey]bool{{WatchID: 1, Hex: "aaa111"}: true}, nil, now)
+
+	got := store.snapshot()
+	delete(got, watchKey{WatchID: 1, Hex: "aaa111"})
+
+	if len(store.snapshot()) != 1 {
+		t.Error("mutating the snapshot must not affect the store")
+	}
+}
+
+func TestActiveMatchStoreForgetDropsOnlyThatWatch(t *testing.T) {
+	store := newActiveMatchStore()
+	now := time.Unix(1785399041, 0)
+	store.apply(map[watchKey]bool{
+		{WatchID: 1, Hex: "aaa111"}: true,
+		{WatchID: 2, Hex: "aaa111"}: true,
+		{WatchID: 2, Hex: "bbb222"}: true,
+	}, nil, now)
+
+	store.forget(2)
+
+	got := store.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("got %d matches want 1", len(got))
+	}
+	if _, ok := got[watchKey{WatchID: 1, Hex: "aaa111"}]; !ok {
+		t.Error("watch 1's match should have survived forget(2)")
+	}
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `go test ./core/ -run TestActiveMatchStore -v`
+Expected: FAIL — `undefined: newActiveMatchStore`.
+
+- [ ] **Step 3: Write the implementation**
 
 Create `core/watches-store.go`:
 
@@ -1193,10 +1277,98 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
+
+// watchKey identifies one aircraft's match against one watch.
+type watchKey struct {
+	WatchID int
+	Hex     string
+}
+
+// activeMatchStore mirrors watch_active_matches in memory so the 2s tick can
+// diff without a round trip. Postgres stays the durable record; the last-seen
+// timestamps are in-memory only and reset to "now" on restart, which just gives
+// every loaded match a fresh grace window.
+type activeMatchStore struct {
+	mu      sync.Mutex
+	matches map[watchKey]time.Time
+}
+
+func newActiveMatchStore() *activeMatchStore {
+	return &activeMatchStore{matches: map[watchKey]time.Time{}}
+}
+
+var activeMatchCache = newActiveMatchStore()
+
+// forget drops every cached match for a watch, so a rewritten or deleted watch
+// cannot leave stale state behind.
+func (s *activeMatchStore) forget(watchID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.matches {
+		if key.WatchID == watchID {
+			delete(s.matches, key)
+		}
+	}
+}
+
+// load replaces the cache from Postgres at startup.
+func (s *activeMatchStore) load(pg *postgres, now time.Time) {
+
+	rows, err := pg.db.Query(context.Background(), `SELECT watch_id, hex FROM watch_active_matches`)
+	if err != nil {
+		log.Error().Err(err).Msg("activeMatchStore.load() - query failed")
+		return
+	}
+	defer rows.Close()
+
+	loaded := map[watchKey]time.Time{}
+	for rows.Next() {
+		var key watchKey
+		if err := rows.Scan(&key.WatchID, &key.Hex); err != nil {
+			log.Error().Err(err).Msg("activeMatchStore.load() - error scanning rows")
+			continue
+		}
+		loaded[key] = now
+	}
+	if err := rows.Err(); err != nil {
+		log.Error().Err(err).Msg("activeMatchStore.load() - row iteration failed")
+	}
+
+	s.mu.Lock()
+	s.matches = loaded
+	s.mu.Unlock()
+
+	log.Debug().Msgf("Loaded %d active watch matches", len(loaded))
+}
+
+// snapshot returns a copy of the current match state.
+func (s *activeMatchStore) snapshot() map[watchKey]time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[watchKey]time.Time, len(s.matches))
+	for k, v := range s.matches {
+		out[k] = v
+	}
+	return out
+}
+
+// apply folds one tick's outcome into the cache: everything still matching gets
+// its timestamp refreshed, everything ended is dropped.
+func (s *activeMatchStore) apply(current map[watchKey]bool, ended []watchKey, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range current {
+		s.matches[key] = now
+	}
+	for _, key := range ended {
+		delete(s.matches, key)
+	}
+}
 
 // watchStore caches the enabled watch definitions so the 2s tick does not
 // re-read them from Postgres every time. The daemon is the only writer, so
@@ -1447,20 +1619,225 @@ func deleteWatch(pg *postgres, id int) error {
 }
 ```
 
-- [ ] **Step 2: Note the forward reference**
+- [ ] **Step 4: Run the tests to verify they pass**
 
-`activeMatchCache` is defined in Task 6. `go build` will fail until Task 6 lands — that is expected and is why this step does not build. Do not stub it; Task 6 supplies it.
+Run: `go build ./... && go test ./core/ -run TestActiveMatchStore -v`
+Expected: build succeeds, all three tests PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Run the full suite**
+
+Run: `go test ./...`
+Expected: `ok github.com/tomcarman/skystats/core`. Nothing calls the new store yet, so no existing behaviour changes.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add core/watches-store.go
-git commit -m "feat: watch definition store with invalidate-on-write cache"
+git add core/watches-store.go core/watches-store_test.go
+git commit -m "feat: watch definition store and active-match cache"
 ```
 
 ---
 
-### Task 6: Watch evaluation engine wired into the ingest tick
+### Task 6: Apprise message and hit-history write
+
+**Files:**
+- Modify: `core/notifications.go` (append to the end of the file)
+- Test: `core/notifications_test.go` (append to the existing file)
+
+**Interfaces:**
+- Consumes: `Watch`, `watchSubject` (Task 2); `firstNonEmpty` (`core/current-sightings.go`, existing); `NotificationService.send`, `NotificationService.loadConfig`, `formatMetric`, `apprisePayload` (`core/notifications.go`, existing).
+- Produces (used by Task 7):
+  - `func buildWatchMessage(watchName string, s watchSubject) (title, body string)`
+  - `func (n *NotificationService) NotifyWatch(w Watch, s watchSubject)`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `core/notifications_test.go`:
+
+```go
+func TestBuildWatchMessageUsesRegistrationInTheTitle(t *testing.T) {
+	s := watchSubject{
+		Hex: "4ca7b5", Callsign: "SAS1234", Registration: "SE-RTM", TypeCode: "B38M",
+		Model: "Boeing 737 MAX 8", Airline: "Scandinavian Airlines",
+		Origin: []string{"ESSA", "ARN"}, Destination: []string{"EKCH", "CPH"},
+		AltitudeFt: 31000, HasAltitude: true, SpeedKt: 450, HasSpeed: true,
+		DistanceKm: 42.5, HasPosition: true, Squawk: "2000",
+	}
+
+	title, body := buildWatchMessage("Boeing close by", s)
+
+	if !strings.Contains(title, "Boeing close by") {
+		t.Errorf("title should name the watch, got %q", title)
+	}
+	if !strings.Contains(title, "SE-RTM") {
+		t.Errorf("title should identify the aircraft, got %q", title)
+	}
+	for _, want := range []string{"SAS1234", "B38M", "Boeing 737 MAX 8", "Scandinavian Airlines", "ARN", "CPH", "31000", "450", "42", "2000"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body is missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestBuildWatchMessageFallsBackToHexAndOmitsMissingData(t *testing.T) {
+	title, body := buildWatchMessage("Anything", watchSubject{Hex: "4ca7b5"})
+
+	if !strings.Contains(title, "4ca7b5") {
+		t.Errorf("title should fall back to the hex, got %q", title)
+	}
+	for _, unwanted := range []string{"Altitude", "Speed", "Distance", "Route", "Squawk"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("body should omit %q when there is no data:\n%s", unwanted, body)
+		}
+	}
+}
+
+func TestBuildWatchMessageMarksFirstEverSighting(t *testing.T) {
+	_, body := buildWatchMessage("New aircraft", watchSubject{Hex: "4ca7b5", FirstSeenEver: true})
+
+	if !strings.Contains(body, "First time") {
+		t.Errorf("body should flag a first-ever sighting:\n%s", body)
+	}
+}
+```
+
+`core/notifications_test.go` already imports `strings`, `testing` and `time`, so its import block needs no change.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `go test ./core/ -run TestBuildWatchMessage -v`
+Expected: FAIL — `undefined: buildWatchMessage`.
+
+- [ ] **Step 3: Write the implementation**
+
+Append to `core/notifications.go`:
+
+```go
+// buildWatchMessage returns (title, body) for an aircraft that has started
+// matching a watch. Fields with no data are omitted rather than shown empty.
+func buildWatchMessage(watchName string, s watchSubject) (string, string) {
+
+	name := firstNonEmpty(s.Registration, strings.TrimSpace(s.Callsign), s.Hex)
+	title := fmt.Sprintf("👁 Watch \"%s\": %s", watchName, name)
+
+	var b strings.Builder
+	if f := strings.TrimSpace(s.Callsign); f != "" {
+		fmt.Fprintf(&b, "Callsign: %s\n", f)
+	}
+	if s.TypeCode != "" {
+		fmt.Fprintf(&b, "Type: %s\n", s.TypeCode)
+	}
+	if s.Model != "" {
+		fmt.Fprintf(&b, "Model: %s\n", s.Model)
+	}
+	if s.Registration != "" {
+		fmt.Fprintf(&b, "Registration: %s\n", s.Registration)
+	}
+	if s.Airline != "" {
+		fmt.Fprintf(&b, "Airline: %s\n", s.Airline)
+	}
+	if len(s.Origin) > 0 && len(s.Destination) > 0 {
+		fmt.Fprintf(&b, "Route: %s → %s\n", s.Origin[len(s.Origin)-1], s.Destination[len(s.Destination)-1])
+	}
+	if s.HasAltitude {
+		fmt.Fprintf(&b, "Altitude: %s ft\n", formatMetric(s.AltitudeFt))
+	}
+	if s.HasSpeed {
+		fmt.Fprintf(&b, "Speed: %s kt\n", formatMetric(s.SpeedKt))
+	}
+	if s.HasPosition {
+		fmt.Fprintf(&b, "Distance: %s km\n", formatMetric(s.DistanceKm))
+	}
+	if s.Squawk != "" {
+		fmt.Fprintf(&b, "Squawk: %s\n", s.Squawk)
+	}
+	if s.FirstSeenEver {
+		fmt.Fprintf(&b, "First time ever seen\n")
+	}
+
+	return title, strings.TrimRight(b.String(), "\n")
+}
+
+// NotifyWatch sends the Apprise notification for a watch match and records the
+// hit. The history row is written whether or not sending is enabled or
+// succeeds, so the Watches tab shows hits even without Apprise configured.
+func (n *NotificationService) NotifyWatch(w Watch, s watchSubject) {
+
+	title, body := buildWatchMessage(w.Name, s)
+
+	snapshot, err := json.Marshal(map[string]any{
+		"callsign":          s.Callsign,
+		"registration":      s.Registration,
+		"type_code":         s.TypeCode,
+		"model":             s.Model,
+		"manufacturer":      s.Manufacturer,
+		"country":           s.Country,
+		"airline":           s.Airline,
+		"origin":            s.Origin,
+		"destination":       s.Destination,
+		"squawk":            s.Squawk,
+		"altitude_ft":       s.AltitudeFt,
+		"speed_kt":          s.SpeedKt,
+		"distance_km":       s.DistanceKm,
+		"vertical_rate_fpm": s.VerticalRateFpm,
+		"first_seen_ever":   s.FirstSeenEver,
+	})
+	if err != nil {
+		log.Error().Err(err).Msg("NotifyWatch() - unable to marshal snapshot")
+		snapshot = []byte("{}")
+	}
+
+	cfg := n.loadConfig()
+	success, sendError := false, ""
+
+	switch {
+	case !cfg.Enabled:
+		sendError = "notifications are disabled"
+	case cfg.APIURL == "":
+		sendError = "apprise api url is not set"
+	default:
+		key := strings.TrimSpace(w.AppriseKey)
+		if key == "" {
+			key = cfg.ConfigKey
+		}
+		if key == "" {
+			sendError = "apprise config key is not set"
+			break
+		}
+		if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
+			sendError = err.Error()
+			log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
+		} else {
+			success = true
+		}
+	}
+
+	_, err = n.pg.db.Exec(context.Background(), `
+		INSERT INTO watch_notifications
+			(watch_id, watch_name, hex, flight, registration, snapshot, apprise_success, apprise_error)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, NULLIF($8, ''))`,
+		w.ID, w.Name, s.Hex, strings.TrimSpace(s.Callsign), s.Registration, snapshot, success, sendError)
+	if err != nil {
+		log.Error().Err(err).Msg("NotifyWatch() - failed to write watch_notifications")
+	}
+}
+```
+
+- [ ] **Step 4: Build and run the full test suite**
+
+Run: `go build ./... && go test ./...`
+Expected: build succeeds, all tests pass. Nothing calls `NotifyWatch` yet — the engine wires it up in Task 7.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add core/notifications.go core/notifications_test.go
+git commit -m "feat: Apprise watch notifications and hit history"
+```
+
+---
+
+### Task 7: Watch evaluation engine wired into the ingest tick
 
 **Files:**
 - Create: `core/watches-engine.go`
@@ -1469,11 +1846,8 @@ git commit -m "feat: watch definition store with invalidate-on-write cache"
 - Modify: `core/core.go:98` area (initialise the engine next to the notifier)
 
 **Interfaces:**
-- Consumes: `matchWatch`, `Watch`, `watchSubject` (Task 2); `aircraftEnrichment`, `enrichAircraftSnapshot` (Task 3); `markKnownAircraft`, `firstSeenTracker` (Task 4); `watchCache` (Task 5); `notifier.NotifyWatch` (Task 7).
-- Produces (used by Tasks 5, 7, 8, 12):
-  - `type watchKey struct { WatchID int; Hex string }`
-  - `var activeMatchCache = newActiveMatchStore()`
-  - `func (s *activeMatchStore) forget(watchID int)`
+- Consumes: `matchWatch`, `Watch`, `watchSubject` (Task 2); `aircraftEnrichment`, `enrichAircraftSnapshot` (Task 3); `markKnownAircraft`, `firstSeenTracker` (Task 4); `watchCache`, `activeMatchCache`, `watchKey` (Task 5); `notifier.NotifyWatch` (Task 6).
+- Produces (used by Task 12):
   - `func diffMatches(current map[watchKey]bool, previous map[watchKey]time.Time, now time.Time, grace time.Duration) (started, ended []watchKey)`
   - `func buildWatchSubject(a Aircraft, e aircraftEnrichment, distanceKm float64, hasPosition, firstSeenEver bool) watchSubject`
   - `func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]aircraftEnrichment)`
@@ -1649,7 +2023,7 @@ func TestBuildWatchSubjectFallsBackToDatabaseValues(t *testing.T) {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `go test ./core/ -run 'TestDiffMatches|TestBuildWatchSubject' -v`
-Expected: FAIL — `undefined: watchKey`, `undefined: diffMatches`, `undefined: buildWatchSubject`.
+Expected: FAIL — `undefined: diffMatches`, `undefined: buildWatchSubject`. (`watchKey` already exists — Task 5 defines it.)
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1660,7 +2034,6 @@ package main
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -1672,93 +2045,6 @@ import (
 // sighting, so "new sighting" and "new notification" agree, and it absorbs the
 // occasional tick where readsb drops an aircraft from the feed.
 const watchMatchGrace = 10 * time.Minute
-
-// watchKey identifies one aircraft's match against one watch.
-type watchKey struct {
-	WatchID int
-	Hex     string
-}
-
-// activeMatchStore mirrors watch_active_matches in memory so the 2s tick can
-// diff without a round trip. Postgres stays the durable record; the last-seen
-// timestamps are in-memory only and reset to "now" on restart, which just gives
-// every loaded match a fresh grace window.
-type activeMatchStore struct {
-	mu      sync.Mutex
-	matches map[watchKey]time.Time
-}
-
-func newActiveMatchStore() *activeMatchStore {
-	return &activeMatchStore{matches: map[watchKey]time.Time{}}
-}
-
-var activeMatchCache = newActiveMatchStore()
-
-// forget drops every cached match for a watch, so a rewritten or deleted watch
-// cannot leave stale state behind.
-func (s *activeMatchStore) forget(watchID int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key := range s.matches {
-		if key.WatchID == watchID {
-			delete(s.matches, key)
-		}
-	}
-}
-
-// load replaces the cache from Postgres at startup.
-func (s *activeMatchStore) load(pg *postgres, now time.Time) {
-
-	rows, err := pg.db.Query(context.Background(), `SELECT watch_id, hex FROM watch_active_matches`)
-	if err != nil {
-		log.Error().Err(err).Msg("activeMatchStore.load() - query failed")
-		return
-	}
-	defer rows.Close()
-
-	loaded := map[watchKey]time.Time{}
-	for rows.Next() {
-		var key watchKey
-		if err := rows.Scan(&key.WatchID, &key.Hex); err != nil {
-			log.Error().Err(err).Msg("activeMatchStore.load() - error scanning rows")
-			continue
-		}
-		loaded[key] = now
-	}
-	if err := rows.Err(); err != nil {
-		log.Error().Err(err).Msg("activeMatchStore.load() - row iteration failed")
-	}
-
-	s.mu.Lock()
-	s.matches = loaded
-	s.mu.Unlock()
-
-	log.Debug().Msgf("Loaded %d active watch matches", len(loaded))
-}
-
-// snapshot returns a copy of the current match state.
-func (s *activeMatchStore) snapshot() map[watchKey]time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make(map[watchKey]time.Time, len(s.matches))
-	for k, v := range s.matches {
-		out[k] = v
-	}
-	return out
-}
-
-// apply folds one tick's outcome into the cache: everything still matching gets
-// its timestamp refreshed, everything ended is dropped.
-func (s *activeMatchStore) apply(current map[watchKey]bool, ended []watchKey, now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key := range current {
-		s.matches[key] = now
-	}
-	for _, key := range ended {
-		delete(s.matches, key)
-	}
-}
 
 // diffMatches compares this tick's match set against the previous state.
 // started is everything newly matching (one notification each); ended is
@@ -1941,217 +2227,16 @@ In `core/core.go`, immediately after the `notifier = NewNotificationService(pg)`
 	initWatchEngine(pg)
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 6: Build and run the full test suite**
 
-`go build` still fails at this point because `notifier.NotifyWatch` arrives in Task 7. Run only the compile-independent check after Task 7. For now:
-
-Run: `go vet ./core/ 2>&1 | head`
-Expected: the only reported problem is `notifier.NotifyWatch undefined`. Any other error is a real bug — fix it before moving on.
+Run: `go build ./... && go test ./...`
+Expected: build succeeds — every symbol this task uses now exists, including `notifier.NotifyWatch` from Task 6 — and all tests pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add core/watches-engine.go core/watches-engine_test.go core/aircraft.go core/core.go
 git commit -m "feat: watch evaluation engine on the 2s ingest tick"
-```
-
----
-
-### Task 7: Apprise message and hit-history write
-
-**Files:**
-- Modify: `core/notifications.go` (append to the end of the file)
-- Test: `core/notifications_test.go` (append to the existing file)
-
-**Interfaces:**
-- Consumes: `Watch`, `watchSubject` (Task 2); `NotificationService.send`, `NotificationService.loadConfig` (existing).
-- Produces (used by Task 6):
-  - `func buildWatchMessage(watchName string, s watchSubject) (title, body string)`
-  - `func (n *NotificationService) NotifyWatch(w Watch, s watchSubject)`
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `core/notifications_test.go`:
-
-```go
-func TestBuildWatchMessageUsesRegistrationInTheTitle(t *testing.T) {
-	s := watchSubject{
-		Hex: "4ca7b5", Callsign: "SAS1234", Registration: "SE-RTM", TypeCode: "B38M",
-		Model: "Boeing 737 MAX 8", Airline: "Scandinavian Airlines",
-		Origin: []string{"ESSA", "ARN"}, Destination: []string{"EKCH", "CPH"},
-		AltitudeFt: 31000, HasAltitude: true, SpeedKt: 450, HasSpeed: true,
-		DistanceKm: 42.5, HasPosition: true, Squawk: "2000",
-	}
-
-	title, body := buildWatchMessage("Boeing close by", s)
-
-	if !strings.Contains(title, "Boeing close by") {
-		t.Errorf("title should name the watch, got %q", title)
-	}
-	if !strings.Contains(title, "SE-RTM") {
-		t.Errorf("title should identify the aircraft, got %q", title)
-	}
-	for _, want := range []string{"SAS1234", "B38M", "Boeing 737 MAX 8", "Scandinavian Airlines", "ARN", "CPH", "31000", "450", "42", "2000"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body is missing %q:\n%s", want, body)
-		}
-	}
-}
-
-func TestBuildWatchMessageFallsBackToHexAndOmitsMissingData(t *testing.T) {
-	title, body := buildWatchMessage("Anything", watchSubject{Hex: "4ca7b5"})
-
-	if !strings.Contains(title, "4ca7b5") {
-		t.Errorf("title should fall back to the hex, got %q", title)
-	}
-	for _, unwanted := range []string{"Altitude", "Speed", "Distance", "Route", "Squawk"} {
-		if strings.Contains(body, unwanted) {
-			t.Errorf("body should omit %q when there is no data:\n%s", unwanted, body)
-		}
-	}
-}
-
-func TestBuildWatchMessageMarksFirstEverSighting(t *testing.T) {
-	_, body := buildWatchMessage("New aircraft", watchSubject{Hex: "4ca7b5", FirstSeenEver: true})
-
-	if !strings.Contains(body, "First time") {
-		t.Errorf("body should flag a first-ever sighting:\n%s", body)
-	}
-}
-```
-
-`core/notifications_test.go` already imports `strings`, `testing` and `time`, so its import block needs no change.
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `go test ./core/ -run TestBuildWatchMessage -v`
-Expected: FAIL — `undefined: buildWatchMessage`.
-
-- [ ] **Step 3: Write the implementation**
-
-Append to `core/notifications.go`:
-
-```go
-// buildWatchMessage returns (title, body) for an aircraft that has started
-// matching a watch. Fields with no data are omitted rather than shown empty.
-func buildWatchMessage(watchName string, s watchSubject) (string, string) {
-
-	name := firstNonEmpty(s.Registration, strings.TrimSpace(s.Callsign), s.Hex)
-	title := fmt.Sprintf("👁 Watch \"%s\": %s", watchName, name)
-
-	var b strings.Builder
-	if f := strings.TrimSpace(s.Callsign); f != "" {
-		fmt.Fprintf(&b, "Callsign: %s\n", f)
-	}
-	if s.TypeCode != "" {
-		fmt.Fprintf(&b, "Type: %s\n", s.TypeCode)
-	}
-	if s.Model != "" {
-		fmt.Fprintf(&b, "Model: %s\n", s.Model)
-	}
-	if s.Registration != "" {
-		fmt.Fprintf(&b, "Registration: %s\n", s.Registration)
-	}
-	if s.Airline != "" {
-		fmt.Fprintf(&b, "Airline: %s\n", s.Airline)
-	}
-	if len(s.Origin) > 0 && len(s.Destination) > 0 {
-		fmt.Fprintf(&b, "Route: %s → %s\n", s.Origin[len(s.Origin)-1], s.Destination[len(s.Destination)-1])
-	}
-	if s.HasAltitude {
-		fmt.Fprintf(&b, "Altitude: %s ft\n", formatMetric(s.AltitudeFt))
-	}
-	if s.HasSpeed {
-		fmt.Fprintf(&b, "Speed: %s kt\n", formatMetric(s.SpeedKt))
-	}
-	if s.HasPosition {
-		fmt.Fprintf(&b, "Distance: %s km\n", formatMetric(s.DistanceKm))
-	}
-	if s.Squawk != "" {
-		fmt.Fprintf(&b, "Squawk: %s\n", s.Squawk)
-	}
-	if s.FirstSeenEver {
-		fmt.Fprintf(&b, "First time ever seen\n")
-	}
-
-	return title, strings.TrimRight(b.String(), "\n")
-}
-
-// NotifyWatch sends the Apprise notification for a watch match and records the
-// hit. The history row is written whether or not sending is enabled or
-// succeeds, so the Watches tab shows hits even without Apprise configured.
-func (n *NotificationService) NotifyWatch(w Watch, s watchSubject) {
-
-	title, body := buildWatchMessage(w.Name, s)
-
-	snapshot, err := json.Marshal(map[string]any{
-		"callsign":          s.Callsign,
-		"registration":      s.Registration,
-		"type_code":         s.TypeCode,
-		"model":             s.Model,
-		"manufacturer":      s.Manufacturer,
-		"country":           s.Country,
-		"airline":           s.Airline,
-		"origin":            s.Origin,
-		"destination":       s.Destination,
-		"squawk":            s.Squawk,
-		"altitude_ft":       s.AltitudeFt,
-		"speed_kt":          s.SpeedKt,
-		"distance_km":       s.DistanceKm,
-		"vertical_rate_fpm": s.VerticalRateFpm,
-		"first_seen_ever":   s.FirstSeenEver,
-	})
-	if err != nil {
-		log.Error().Err(err).Msg("NotifyWatch() - unable to marshal snapshot")
-		snapshot = []byte("{}")
-	}
-
-	cfg := n.loadConfig()
-	success, sendError := false, ""
-
-	switch {
-	case !cfg.Enabled:
-		sendError = "notifications are disabled"
-	case cfg.APIURL == "":
-		sendError = "apprise api url is not set"
-	default:
-		key := strings.TrimSpace(w.AppriseKey)
-		if key == "" {
-			key = cfg.ConfigKey
-		}
-		if key == "" {
-			sendError = "apprise config key is not set"
-			break
-		}
-		if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
-			sendError = err.Error()
-			log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
-		} else {
-			success = true
-		}
-	}
-
-	_, err = n.pg.db.Exec(context.Background(), `
-		INSERT INTO watch_notifications
-			(watch_id, watch_name, hex, flight, registration, snapshot, apprise_success, apprise_error)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, NULLIF($8, ''))`,
-		w.ID, w.Name, s.Hex, strings.TrimSpace(s.Callsign), s.Registration, snapshot, success, sendError)
-	if err != nil {
-		log.Error().Err(err).Msg("NotifyWatch() - failed to write watch_notifications")
-	}
-}
-```
-
-- [ ] **Step 4: Build and run the full test suite**
-
-Run: `go build ./... && go test ./...`
-Expected: build succeeds (the Task 5 and Task 6 forward references now resolve); all tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add core/notifications.go core/notifications_test.go
-git commit -m "feat: Apprise watch notifications and hit history"
 ```
 
 ---
