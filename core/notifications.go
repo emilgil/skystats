@@ -16,15 +16,28 @@ import (
 // notifier is the process-wide notification sender, initialised in main().
 var notifier *NotificationService
 
+// watchSendConcurrency bounds how many watch notifications may be in flight at
+// once. Each one holds a pool connection and can sit on a 5-second HTTP POST,
+// and a broad watch can start matching dozens of aircraft on a single tick, so
+// without a bound they would starve the rest of the tick of connections and
+// fire a burst the notification service will rate-limit anyway.
+const watchSendConcurrency = 4
+
 type NotificationService struct {
 	pg     *postgres
 	client *http.Client
+
+	// watchSends is a counting semaphore over the watch notification workers.
+	// It is nil in tests that build the service directly; a nil semaphore just
+	// means unbounded, which is what a single-shot unit test wants.
+	watchSends chan struct{}
 }
 
 func NewNotificationService(pg *postgres) *NotificationService {
 	return &NotificationService{
-		pg:     pg,
-		client: &http.Client{Timeout: 5 * time.Second},
+		pg:         pg,
+		client:     &http.Client{Timeout: 5 * time.Second},
+		watchSends: make(chan struct{}, watchSendConcurrency),
 	}
 }
 
@@ -389,9 +402,18 @@ func buildWatchMessage(watchName string, s watchSubject) (string, string) {
 }
 
 // NotifyWatch sends the Apprise notification for a watch match and records the
-// hit. The history row is written whether or not sending is enabled or
-// succeeds, so the Watches tab shows hits even without Apprise configured.
-func (n *NotificationService) NotifyWatch(w Watch, s watchSubject) {
+// hit. The history row is written whether or not sending is enabled, capped or
+// successful, so the Watches tab shows hits even without Apprise configured.
+//
+// cfg is loaded once per tick by evaluateWatches and passed in rather than read
+// here, and allowSend is false when the per-tick cap has already been spent —
+// the row is still written, only the push is dropped.
+func (n *NotificationService) NotifyWatch(cfg NotificationConfig, w Watch, s watchSubject, allowSend bool) {
+
+	if n.watchSends != nil {
+		n.watchSends <- struct{}{}
+		defer func() { <-n.watchSends }()
+	}
 
 	title, body := buildWatchMessage(w.Name, s)
 
@@ -417,37 +439,66 @@ func (n *NotificationService) NotifyWatch(w Watch, s watchSubject) {
 		snapshot = []byte("{}")
 	}
 
-	cfg := n.loadConfig()
-	success, sendError := false, ""
-
+	// Resolve what will happen to this match before anything is written, so the
+	// history row can record the reason when no POST is attempted at all.
+	var key, sendError string
+	send := false
 	switch {
+	case !allowSend:
+		sendError = "suppressed: per-tick notification cap reached"
 	case !cfg.Enabled:
 		sendError = "notifications are disabled"
 	case cfg.APIURL == "":
 		sendError = "apprise api url is not set"
 	default:
-		key := strings.TrimSpace(w.AppriseKey)
-		if key == "" {
-			key = cfg.ConfigKey
-		}
+		key = firstNonEmpty(strings.TrimSpace(w.AppriseKey), cfg.ConfigKey)
 		if key == "" {
 			sendError = "apprise config key is not set"
-			break
-		}
-		if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
-			sendError = err.Error()
-			log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
 		} else {
-			success = true
+			send = true
 		}
 	}
 
-	_, err = n.pg.db.Exec(context.Background(), `
+	// The history row goes in before the POST, not after. The POST can take up
+	// to five seconds, and if the user deletes the watch inside that window an
+	// INSERT afterwards fails the watch_id foreign key and the hit is lost
+	// entirely — even though the message was delivered. Written first, the row
+	// merely has its watch_id set to NULL by the delete (ON DELETE SET NULL)
+	// and survives with watch_name intact, which is the behaviour the feature
+	// promises: deleting a watch keeps its history.
+	var id int
+	err = n.pg.db.QueryRow(context.Background(), `
 		INSERT INTO watch_notifications
 			(watch_id, watch_name, hex, flight, registration, snapshot, apprise_success, apprise_error)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7, NULLIF($8, ''))`,
-		w.ID, w.Name, s.Hex, strings.TrimSpace(s.Callsign), s.Registration, snapshot, success, sendError)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, false, NULLIF($7, ''))
+		RETURNING id`,
+		w.ID, w.Name, s.Hex, strings.TrimSpace(s.Callsign), s.Registration, snapshot, sendError).Scan(&id)
+	recorded := err == nil
 	if err != nil {
 		log.Error().Err(err).Msg("NotifyWatch() - failed to write watch_notifications")
+	}
+
+	if !send {
+		return
+	}
+
+	success := false
+	if _, err := n.send(cfg.APIURL, key, apprisePayload{Title: title, Body: body}); err != nil {
+		sendError = err.Error()
+		log.Error().Err(err).Msgf("Watch notification failed for watch %d / %s", w.ID, s.Hex)
+	} else {
+		success, sendError = true, ""
+	}
+
+	if !recorded {
+		return
+	}
+
+	_, err = n.pg.db.Exec(context.Background(), `
+		UPDATE watch_notifications
+		SET apprise_success = $2, apprise_error = NULLIF($3, '')
+		WHERE id = $1`, id, success, sendError)
+	if err != nil {
+		log.Error().Err(err).Msg("NotifyWatch() - failed to update watch_notifications outcome")
 	}
 }

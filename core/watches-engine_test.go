@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -164,5 +166,119 @@ func TestBuildWatchSubjectFallsBackToDatabaseValues(t *testing.T) {
 	}
 	if s.Model != "Boeing 737-800" {
 		t.Errorf("model: got %s want Boeing 737-800", s.Model)
+	}
+}
+
+func startedKeys(watchID, n int) []watchKey {
+	out := make([]watchKey, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, watchKey{WatchID: watchID, Hex: fmt.Sprintf("%d-%04d", watchID, i)})
+	}
+	return out
+}
+
+func TestPlanWatchSendsAllowsEverythingUnderTheCap(t *testing.T) {
+	started := startedKeys(1, 10)
+
+	send, warning := planWatchSends(started, map[int]string{1: "Nearby"}, 50)
+
+	if len(send) != 10 {
+		t.Errorf("got %d sends want all 10", len(send))
+	}
+	if warning != "" {
+		t.Errorf("nothing was suppressed, so there should be no warning, got %q", warning)
+	}
+}
+
+func TestPlanWatchSendsAllowsExactlyTheCap(t *testing.T) {
+	started := startedKeys(1, 50)
+
+	send, warning := planWatchSends(started, map[int]string{1: "Nearby"}, 50)
+
+	if len(send) != 50 {
+		t.Errorf("got %d sends want 50", len(send))
+	}
+	if warning != "" {
+		t.Errorf("hitting the cap exactly should not warn, got %q", warning)
+	}
+}
+
+func TestPlanWatchSendsCapsTheBurstAndNamesTheWatch(t *testing.T) {
+	started := startedKeys(1, 150)
+
+	send, warning := planWatchSends(started, map[int]string{1: "Under 100 km"}, 50)
+
+	if len(send) != 50 {
+		t.Fatalf("got %d sends want the cap of 50", len(send))
+	}
+	for _, want := range []string{"50", "100 of 150", `"Under 100 km": 100`} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning is missing %q:\n%s", want, warning)
+		}
+	}
+}
+
+func TestPlanWatchSendsReportsEverySuppressedWatchOnce(t *testing.T) {
+	started := append(startedKeys(1, 40), startedKeys(2, 40)...)
+
+	send, warning := planWatchSends(started, map[int]string{1: "Broad", 2: "Also broad"}, 50)
+
+	if len(send) != 50 {
+		t.Fatalf("got %d sends want 50", len(send))
+	}
+	if strings.Count(warning, "suppressed") != 1 {
+		t.Errorf("the cap should produce one warning, not one per watch:\n%s", warning)
+	}
+	for _, want := range []string{`"Broad": 15`, `"Also broad": 15`} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning is missing %q:\n%s", want, warning)
+		}
+	}
+}
+
+func TestPlanWatchSendsSharesTheCapBetweenWatches(t *testing.T) {
+	// A broad watch flooding the tick must not starve a precise one: the user
+	// cares far more about the two hits from "Mil" than about any single one of
+	// the hundred from a distance rule.
+	started := append(startedKeys(1, 100), startedKeys(2, 2)...)
+
+	send, _ := planWatchSends(started, map[int]string{1: "Under 100 km", 2: "Mil"}, 50)
+
+	for _, key := range startedKeys(2, 2) {
+		if !send[key] {
+			t.Errorf("%s from the precise watch should have been sent", key.Hex)
+		}
+	}
+	if len(send) != 50 {
+		t.Errorf("got %d sends want 50", len(send))
+	}
+}
+
+func TestPlanWatchSendsFallsBackToTheWatchIdWhenUnnamed(t *testing.T) {
+	_, warning := planWatchSends(startedKeys(7, 60), nil, 50)
+
+	if !strings.Contains(warning, "watch 7") {
+		t.Errorf("warning should identify the watch even with no name:\n%s", warning)
+	}
+}
+
+func TestPlanWatchSendsTreatsANonPositiveCapAsUnlimited(t *testing.T) {
+	started := startedKeys(1, 150)
+
+	send, warning := planWatchSends(started, nil, 0)
+
+	if len(send) != 150 {
+		t.Errorf("got %d sends want all 150 with the cap disabled", len(send))
+	}
+	if warning != "" {
+		t.Errorf("an unlimited cap should not warn, got %q", warning)
+	}
+}
+
+func TestPlanWatchSendsHandlesNoStartedMatches(t *testing.T) {
+	send, warning := planWatchSends(nil, nil, 50)
+
+	if len(send) != 0 || warning != "" {
+		t.Errorf("got %d sends and warning %q, want neither", len(send), warning)
 	}
 }

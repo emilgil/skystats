@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
 )
 
@@ -19,6 +23,14 @@ const watchMatchGrace = 10 * time.Minute
 // than watchMatchGrace, so a match that is still live when the daemon stops is
 // never mistaken on restart for one that expired while it was down.
 const watchMatchRefreshTicks = 30
+
+// watchNotifyCap is the most Apprise sends a single tick may trigger. A broad
+// watch ("distance under 100 km") can start matching every aircraft in range at
+// once; without a cap that is one push per aircraft, all at the same instant.
+// Every match is still written to watch_active_matches and to the hit history
+// regardless — only the push is dropped — so the Watches tab still shows the
+// full picture.
+const watchNotifyCap = 50
 
 // watchTickCount drives the periodic matched_at refresh. evaluateWatches runs
 // only on the single ingest-tick goroutine, so a plain counter is enough and no
@@ -94,6 +106,145 @@ func nonEmptyValues(values ...string) []string {
 // does not re-notify for aircraft that were already matching.
 func initWatchEngine(pg *postgres) {
 	activeMatchCache.load(pg, time.Now(), watchMatchGrace)
+}
+
+// planWatchSends decides which of one tick's started matches actually get an
+// Apprise push. Everything up to capacity is sent; the rest are suppressed and
+// summarised in the returned warning (empty when nothing was suppressed).
+//
+// Allocation is round-robin across watches rather than first-come, so one broad
+// rule flooding a tick cannot starve a precise rule the user cares more about.
+// capacity <= 0 disables the cap.
+func planWatchSends(started []watchKey, names map[int]string, capacity int) (map[watchKey]bool, string) {
+
+	send := make(map[watchKey]bool, len(started))
+
+	if capacity <= 0 || len(started) <= capacity {
+		for _, key := range started {
+			send[key] = true
+		}
+		return send, ""
+	}
+
+	order := make([]int, 0, len(started))
+	pending := map[int][]watchKey{}
+	for _, key := range started {
+		if _, seen := pending[key.WatchID]; !seen {
+			order = append(order, key.WatchID)
+		}
+		pending[key.WatchID] = append(pending[key.WatchID], key)
+	}
+	sort.Ints(order)
+
+	for len(send) < capacity {
+		progressed := false
+		for _, id := range order {
+			queue := pending[id]
+			if len(queue) == 0 {
+				continue
+			}
+			send[queue[0]] = true
+			pending[id] = queue[1:]
+			progressed = true
+			if len(send) >= capacity {
+				break
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+
+	type suppression struct {
+		id    int
+		count int
+	}
+	var suppressed []suppression
+	total := 0
+	for id, queue := range pending {
+		if len(queue) == 0 {
+			continue
+		}
+		suppressed = append(suppressed, suppression{id: id, count: len(queue)})
+		total += len(queue)
+	}
+	if total == 0 {
+		return send, ""
+	}
+	sort.Slice(suppressed, func(i, j int) bool {
+		if suppressed[i].count != suppressed[j].count {
+			return suppressed[i].count > suppressed[j].count
+		}
+		return suppressed[i].id < suppressed[j].id
+	})
+
+	parts := make([]string, 0, len(suppressed))
+	for _, s := range suppressed {
+		name := names[s.id]
+		if name == "" {
+			name = fmt.Sprintf("watch %d", s.id)
+		}
+		parts = append(parts, fmt.Sprintf("%q: %d", name, s.count))
+	}
+
+	warning := fmt.Sprintf(
+		"Watch notification cap of %d reached: %d of %d pushes suppressed this tick (%s). Every match was still recorded and is visible in the Watches tab.",
+		capacity, total, len(started), strings.Join(parts, ", "))
+
+	return send, warning
+}
+
+const insertActiveMatchSQL = `
+	INSERT INTO watch_active_matches (watch_id, hex, matched_at)
+	VALUES ($1, $2, $3)
+	ON CONFLICT (watch_id, hex) DO NOTHING`
+
+// persistStartedMatches writes one watch_active_matches row per started match
+// and returns only the keys whose row is durably committed — the caller may
+// notify for those and no others.
+func persistStartedMatches(pg *postgres, started []watchKey, now time.Time) []watchKey {
+
+	if len(started) == 0 {
+		return nil
+	}
+
+	batch := &pgx.Batch{}
+	for _, key := range started {
+		batch.Queue(insertActiveMatchSQL, key.WatchID, key.Hex, now)
+	}
+
+	br := pg.db.SendBatch(context.Background(), batch)
+	var batchErr error
+	for range started {
+		if _, err := br.Exec(); err != nil && batchErr == nil {
+			batchErr = err
+		}
+	}
+	if err := br.Close(); err != nil && batchErr == nil {
+		batchErr = err
+	}
+
+	if batchErr == nil {
+		return started
+	}
+
+	// pgx runs a batch inside one implicit transaction, so a single failing
+	// statement rolls back every statement in it: a per-statement nil from
+	// Exec() is not proof that row survived. Rather than risk notifying for a
+	// match Postgres discarded, redo the tick's inserts one at a time, where
+	// each Exec is its own transaction and success really is per key. The
+	// insert is idempotent (ON CONFLICT DO NOTHING), so redoing it is free.
+	log.Warn().Err(batchErr).Msg("evaluateWatches() - batched match insert failed, retrying one at a time")
+
+	confirmed := make([]watchKey, 0, len(started))
+	for _, key := range started {
+		if _, err := pg.db.Exec(context.Background(), insertActiveMatchSQL, key.WatchID, key.Hex, now); err != nil {
+			log.Error().Err(err).Msgf("evaluateWatches() - unable to record match for watch %d / %s", key.WatchID, key.Hex)
+			continue
+		}
+		confirmed = append(confirmed, key)
+	}
+	return confirmed
 }
 
 // refreshMatchTimestamps stamps every still-matching key as confirmed now, in
@@ -182,8 +333,9 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 	// have their row in Postgres from an earlier tick, so they are seeded in
 	// unconditionally; their timestamp is simply refreshed by apply().
 	//
-	// A started match is added only once its INSERT has succeeded, and only
-	// then is the notification fired. If the INSERT fails, the key is left
+	// A started match is added only once persistStartedMatches has confirmed
+	// its INSERT, and only then is the notification fired (or, past the per-tick
+	// cap, its history row written). If the INSERT fails, the key is left
 	// out of both the cache and the notification for this tick: the next tick
 	// still finds it missing from the cache, so diffMatches reports it as
 	// started again and retries the INSERT. That is the only way to avoid
@@ -201,31 +353,41 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 	}
 
 	watchByID := make(map[int]Watch, len(watches))
+	names := make(map[int]string, len(watches))
 	for _, w := range watches {
 		watchByID[w.ID] = w
+		names[w.ID] = w.Name
 	}
 
+	insertable := make([]watchKey, 0, len(started))
 	for _, key := range started {
-		w, ok := watchByID[key.WatchID]
-		if !ok {
-			continue
+		if _, ok := watchByID[key.WatchID]; ok {
+			insertable = append(insertable, key)
 		}
-		subject := subjects[key.Hex]
+	}
 
-		_, err := pg.db.Exec(context.Background(), `
-			INSERT INTO watch_active_matches (watch_id, hex, matched_at)
-			VALUES ($1, $2, $3)
-			ON CONFLICT (watch_id, hex) DO NOTHING`, key.WatchID, key.Hex, now)
-		if err != nil {
-			log.Error().Err(err).Msgf("evaluateWatches() - unable to record match for watch %d / %s", key.WatchID, key.Hex)
-			continue
-		}
+	confirmed := persistStartedMatches(pg, insertable, now)
 
+	// The notification config is read once per tick and handed to every send.
+	// Loading it inside each NotifyWatch would be 15 QueryRow calls per started
+	// match — 2400 of them on a pool of four connections when a broad watch
+	// starts matching every aircraft in range at once.
+	var cfg NotificationConfig
+	if notifier != nil && len(confirmed) > 0 {
+		cfg = notifier.loadConfig()
+	}
+
+	sendable, capWarning := planWatchSends(confirmed, names, watchNotifyCap)
+	if capWarning != "" {
+		log.Warn().Msg(capWarning)
+	}
+
+	for _, key := range confirmed {
 		persisted[key] = true
-		log.Info().Msgf("Watch %q matched %s", w.Name, key.Hex)
+		log.Info().Msgf("Watch %q matched %s", names[key.WatchID], key.Hex)
 
 		if notifier != nil {
-			go notifier.NotifyWatch(w, subject)
+			go notifier.NotifyWatch(cfg, watchByID[key.WatchID], subjects[key.Hex], sendable[key])
 		}
 	}
 
