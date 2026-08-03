@@ -14,6 +14,10 @@
     let error = null;
     let isSaving = false;
     let loadedId = undefined;
+    // Tracks whether the currently-open watch has had its first condition row
+    // seeded yet, so the auto-seed reactive block below runs at most once per
+    // open watch and never fights a user who empties the list on purpose.
+    let seeded = false;
 
     onMount(loadWatchFields);
 
@@ -27,14 +31,25 @@
         combinator = watch.combinator ?? 'AND';
         appriseKey = watch.apprise_key ?? '';
         conditions = (watch.conditions ?? []).map((c) => ({ ...c }));
-        if (conditions.length === 0) addCondition();
+        seeded = conditions.length > 0;
         error = null;
     } else if (!watch) {
         loadedId = undefined;
+        seeded = false;
     }
 
     $: fields = $watchFields.fields;
     $: operatorLabels = $watchFields.operators;
+
+    // A condition row needs a real field key and its first allowed operator —
+    // neither exists until $watchFields has loaded, so seeding a first row
+    // can't happen sooner. This runs once per open watch (guarded by
+    // `seeded`); after that, an empty list stays empty, e.g. once the user
+    // removes the last row on purpose.
+    $: if (watch && !seeded && fields.length > 0) {
+        seeded = true;
+        if (conditions.length === 0) addCondition();
+    }
 
     function fieldFor(key) {
         return fields.find((f) => f.key === key);
@@ -42,10 +57,8 @@
 
     function addCondition() {
         const first = fields[0];
-        conditions = [
-            ...conditions,
-            { field: first?.key ?? 'callsign', operator: first?.operators?.[0] ?? 'contains', value: '' }
-        ];
+        if (!first) return;
+        conditions = [...conditions, { field: first.key, operator: first.operators[0], value: '' }];
     }
 
     function removeCondition(index) {
@@ -139,6 +152,7 @@
                     <div class="flex flex-wrap items-end gap-2 mb-3">
                         <select
                             class="select select-bordered select-sm grow"
+                            aria-label="Condition field"
                             bind:value={condition.field}
                             on:change={() => onFieldChange(index)}
                         >
@@ -147,7 +161,11 @@
                             {/each}
                         </select>
 
-                        <select class="select select-bordered select-sm" bind:value={condition.operator}>
+                        <select
+                            class="select select-bordered select-sm"
+                            aria-label="Condition operator"
+                            bind:value={condition.operator}
+                        >
                             {#each fieldFor(condition.field)?.operators ?? [] as operator}
                                 <option value={operator}>{operatorLabels[operator] ?? operator}</option>
                             {/each}
@@ -157,6 +175,7 @@
                             <input
                                 type="text"
                                 class="input input-bordered input-sm grow"
+                                aria-label="Condition value"
                                 placeholder={fieldFor(condition.field)?.kind === 'number'
                                     ? fieldFor(condition.field)?.unit ?? 'value'
                                     : 'value'}
