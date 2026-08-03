@@ -57,6 +57,7 @@ func updateAircraftDatabase(pg *postgres) {
 	// snapshot.
 	enrichment := enrichAircraftSnapshot(pg, aircraftsInRange)
 	refreshCurrentSightings(response.Now, aircraftsInRange, enrichment)
+	evaluateWatches(pg, aircraftsInRange, enrichment)
 }
 
 func isNonAircraft(aircraft Aircraft) bool {

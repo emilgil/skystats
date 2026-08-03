@@ -97,6 +97,10 @@ func main() {
 	// and record triggers.
 	notifier = NewNotificationService(pg)
 
+	// Restore the watch match state so a restart does not re-notify for
+	// aircraft that were already matching.
+	initWatchEngine(pg)
+
 	// Start API server in a separate goroutine
 	log.Info().Msg("Starting API server")
 	apiServer := NewAPIServer(pg)
