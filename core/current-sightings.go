@@ -39,15 +39,23 @@ type CurrentSighting struct {
 }
 
 // aircraftEnrichment holds the per-hex details that live in Postgres rather
-// than in the readsb feed.
+// than in the readsb feed. Consumed by both Current Sightings and the watch
+// engine, so it carries fields neither uses on its own.
 type aircraftEnrichment struct {
 	Registration     *string
 	IcaoType         *string
+	AircraftType     *string
+	Manufacturer     *string
+	CountryName      *string
 	RegisteredOwner  *string
 	AirlineName      *string
+	AirlineIcao      *string
+	AirlineIata      *string
 	OriginIata       *string
+	OriginIcao       *string
 	OriginName       *string
 	DestinationIata  *string
+	DestinationIcao  *string
 	DestinationName  *string
 	InterestingGroup *string
 }
@@ -157,18 +165,26 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 		SELECT s.hex,
 		       reg.registration,
 		       reg.icao_type,
+		       reg.type,
+		       reg.manufacturer,
+		       reg.registered_owner_country_name,
 		       reg.registered_owner,
 		       rt.airline_name,
+		       rt.airline_icao,
+		       rt.airline_iata,
 		       rt.origin_iata_code,
+		       rt.origin_icao_code,
 		       rt.origin_name,
 		       rt.destination_iata_code,
+		       rt.destination_icao_code,
 		       rt.destination_name,
 		       ia."group"
 		FROM unnest($1::text[], $2::text[]) AS s(hex, flight)
 		LEFT JOIN registration_data reg ON reg.mode_s = s.hex
 		LEFT JOIN LATERAL (
-			SELECT airline_name, origin_iata_code, origin_name,
-			       destination_iata_code, destination_name
+			SELECT airline_name, airline_icao, airline_iata,
+			       origin_iata_code, origin_icao_code, origin_name,
+			       destination_iata_code, destination_icao_code, destination_name
 			FROM route_data
 			WHERE route_callsign = s.flight
 			LIMIT 1
@@ -196,11 +212,18 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 			&hex,
 			&e.Registration,
 			&e.IcaoType,
+			&e.AircraftType,
+			&e.Manufacturer,
+			&e.CountryName,
 			&e.RegisteredOwner,
 			&e.AirlineName,
+			&e.AirlineIcao,
+			&e.AirlineIata,
 			&e.OriginIata,
+			&e.OriginIcao,
 			&e.OriginName,
 			&e.DestinationIata,
+			&e.DestinationIcao,
 			&e.DestinationName,
 			&e.InterestingGroup,
 		)
@@ -215,9 +238,35 @@ func fetchAircraftEnrichment(pg *postgres, hexes []string, flights []string) (ma
 	return enrichment, rows.Err()
 }
 
+// enrichAircraftSnapshot fetches the Postgres-side details for one readsb
+// snapshot, once per tick, for every consumer that needs them. On error it
+// returns an empty map so callers degrade to live-only data rather than
+// freezing on stale values.
+func enrichAircraftSnapshot(pg *postgres, aircraft []Aircraft) map[string]aircraftEnrichment {
+
+	if len(aircraft) == 0 {
+		return map[string]aircraftEnrichment{}
+	}
+
+	hexes := make([]string, 0, len(aircraft))
+	flights := make([]string, 0, len(aircraft))
+	for _, a := range aircraft {
+		hexes = append(hexes, a.Hex)
+		flights = append(flights, a.Flight)
+	}
+
+	enrichment, err := fetchAircraftEnrichment(pg, hexes, flights)
+	if err != nil {
+		log.Error().Err(err).Msg("enrichAircraftSnapshot() - unable to fetch enrichment")
+		return map[string]aircraftEnrichment{}
+	}
+
+	return enrichment
+}
+
 // refreshCurrentSightings rebuilds the Current Sightings payload from the
 // snapshot the ingest ticker just processed.
-func refreshCurrentSightings(pg *postgres, nowEpoch float64, aircraft []Aircraft) {
+func refreshCurrentSightings(nowEpoch float64, aircraft []Aircraft, enrichment map[string]aircraftEnrichment) {
 
 	// A non-JSON readsb response (e.g. an HTML error page) leaves nowEpoch at
 	// its zero value, since json.Unmarshal's error is discarded upstream. Bail
@@ -236,21 +285,6 @@ func refreshCurrentSightings(pg *postgres, nowEpoch float64, aircraft []Aircraft
 	if len(aircraft) == 0 {
 		currentSightings.replace([]CurrentSighting{}, generatedAt)
 		return
-	}
-
-	hexes := make([]string, 0, len(aircraft))
-	flights := make([]string, 0, len(aircraft))
-	for _, a := range aircraft {
-		hexes = append(hexes, a.Hex)
-		flights = append(flights, a.Flight)
-	}
-
-	enrichment, err := fetchAircraftEnrichment(pg, hexes, flights)
-	if err != nil {
-		// Serve the live rows without enrichment rather than freezing the
-		// table on stale data.
-		log.Error().Err(err).Msg("refreshCurrentSightings() - unable to fetch enrichment")
-		enrichment = map[string]aircraftEnrichment{}
 	}
 
 	sightings := buildCurrentSightings(aircraft, enrichment, nowEpoch, func(lat, lon float64) float64 {

@@ -52,7 +52,11 @@ func updateAircraftDatabase(pg *postgres) {
 
 	}
 	pg.updateDatabase(response.Now, aircraftsInRange)
-	refreshCurrentSightings(pg, response.Now, aircraftsInRange)
+
+	// One enrichment round trip per tick, shared by every consumer of the
+	// snapshot.
+	enrichment := enrichAircraftSnapshot(pg, aircraftsInRange)
+	refreshCurrentSightings(response.Now, aircraftsInRange, enrichment)
 }
 
 func isNonAircraft(aircraft Aircraft) bool {
