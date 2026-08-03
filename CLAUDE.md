@@ -8,7 +8,7 @@ Skystats retrieves, stores, and displays aircraft ADS-B data received via an SDR
 
 ## Commands
 
-There are no tests in this repository.
+Run the Go tests with `go test ./...` from the repository root. Coverage is limited to the pure Go logic — matching, diffing, formatting, aggregation — which is deliberately kept free of I/O so it can be tested without fixtures. The database, HTTP handler and Svelte layers have no test harness, so changes there have to be verified by running the stack.
 
 ### Backend (Go, in `core/`)
 
