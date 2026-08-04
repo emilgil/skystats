@@ -49,9 +49,9 @@ func updateRoutes(pg *postgres) {
 func unprocessedRoutes(pg *postgres) []Aircraft {
 
 	query := `
-		SELECT id, flight, last_seen_lat, last_seen_lon
+		SELECT id, flight, last_seen_lat, last_seen_lon, route_attempts
 		FROM aircraft_data
-		WHERE 
+		WHERE
 			hex != '' AND
 			flight != '' AND
 			route_processed = false
@@ -76,6 +76,7 @@ func unprocessedRoutes(pg *postgres) []Aircraft {
 			&aircraft.Flight,
 			&aircraft.LastSeenLat,
 			&aircraft.LastSeenLon,
+			&aircraft.RouteAttempts,
 		)
 
 		if err != nil {

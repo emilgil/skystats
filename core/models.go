@@ -60,6 +60,7 @@ type Aircraft struct {
 	LastSeenLon         sql.NullFloat64
 	LastSeenDistance    sql.NullFloat64
 	DestinationDistance sql.NullFloat64
+	RouteAttempts       int
 	LowestProcessed     bool
 	HighestProcessed    bool
 	FastestProcessed    bool
