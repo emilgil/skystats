@@ -209,27 +209,30 @@ func getRoutes(aircrafts []Aircraft) ([]RouteInfo, error) {
 	return routes, nil
 }
 
-func insertRoutes(pg *postgres, routes []RouteInfo) {
+func insertRoutes(pg *postgres, routes []RouteInfo) map[string]bool {
 
 	batch := &pgx.Batch{}
 	last_updated := time.Now().UTC().Format("2006-01-02 15:04:05-07")
 	countryLookup := CountryIsoToName()
-	queuedCount := 0
+	var queuedCallsigns []string
 
 	for _, route := range routes {
 
 		// Skip callsigns that were not matched
 		if route.AirportCodesIata == "unknown" {
+			log.Debug().Str("callsign", route.Callsign).Msg("insertRoutes() - callsign not found by adsbdb")
 			continue
 		}
 
 		// Skip any "unplausible" routes
 		if route.Plausible == false {
+			log.Debug().Str("callsign", route.Callsign).Msg("insertRoutes() - route marked implausible by adsbdb")
 			continue
 		}
 
 		// Skip any empty or multihop routes - for now
 		if route.Airports == nil || len(route.Airports) != 2 {
+			log.Debug().Str("callsign", route.Callsign).Int("airport_count", len(route.Airports)).Msg("insertRoutes() - empty or multi-hop route")
 			continue
 		}
 
@@ -334,19 +337,23 @@ func insertRoutes(pg *postgres, routes []RouteInfo) {
 			destination.Name,
 			last_updated,
 			distance)
-		queuedCount++
+		queuedCallsigns = append(queuedCallsigns, route.Callsign)
 	}
 
 	br := pg.db.SendBatch(context.Background(), batch)
 	defer br.Close()
 
-	for i := 0; i < queuedCount; i++ {
+	matched := make(map[string]bool, len(queuedCallsigns))
+	for _, callsign := range queuedCallsigns {
 		_, err := br.Exec()
 		if err != nil {
-			log.Error().Err(err).Msg("insertRoutes() - Unable to insert data")
+			log.Error().Err(err).Str("callsign", callsign).Msg("insertRoutes() - Unable to insert data")
+			continue
 		}
+		matched[callsign] = true
 	}
 
+	return matched
 }
 
 func buildRouteApiRequestBody(aircrafts []Aircraft) RouteAPIRequest {
