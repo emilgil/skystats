@@ -1,6 +1,6 @@
 <script>
     import { onMount } from 'svelte';
-    import { settings } from '../stores/settings';
+    import { settings, refreshRecordHolderData } from '../stores/settings';
     import { hiddenCards } from '../stores/hiddenCards';
     import { dashboardCards } from '../lib/dashboardCards';
 
@@ -50,8 +50,72 @@
         { id: 'display', label: 'Display' },
         { id: 'cards', label: 'Cards' },
         { id: 'notifications', label: 'Notifications' },
-        { id: 'about', label: 'About' }
+        { id: 'about', label: 'About' },
+        { id: 'danger-zone', label: 'Danger Zone', danger: true }
     ];
+
+    // Keys must match records.category in the database; the backend rejects anything else.
+    const recordCategories = [
+        { key: 'fastest', label: 'Fastest' },
+        { key: 'slowest', label: 'Slowest' },
+        { key: 'highest', label: 'Highest' },
+        { key: 'lowest', label: 'Lowest' },
+        { key: 'furthest_flown', label: 'Furthest flown' },
+        { key: 'longest_route', label: 'Longest route' },
+        { key: 'most_remaining', label: 'Most remaining' }
+    ];
+
+    let selectedCategories = new Set();
+    let isClearing = false;
+    let clearResult = null;
+
+    $: allCategoriesSelected = recordCategories.every((c) => selectedCategories.has(c.key));
+
+    function toggleCategory(key, checked) {
+        if (checked) {
+            selectedCategories.add(key);
+        } else {
+            selectedCategories.delete(key);
+        }
+        selectedCategories = selectedCategories; // Set mutation is not reactive on its own
+        clearResult = null;
+    }
+
+    function toggleAllCategories(checked) {
+        selectedCategories = checked ? new Set(recordCategories.map((c) => c.key)) : new Set();
+        clearResult = null;
+    }
+
+    function openClearConfirm() {
+        if (selectedCategories.size === 0) return;
+        clearResult = null;
+        document.getElementById('clear-records-modal')?.showModal();
+    }
+
+    async function clearSelectedRecords() {
+        document.getElementById('clear-records-modal')?.close();
+        isClearing = true;
+        try {
+            const response = await fetch('/api/records', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ categories: Array.from(selectedCategories) })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                const rows = Object.values(data.cleared ?? {}).reduce((sum, n) => sum + n, 0);
+                clearResult = { ok: true, message: `Cleared ${rows} record${rows === 1 ? '' : 's'}.` };
+                selectedCategories = new Set();
+                refreshRecordHolderData.update((n) => n + 1);
+            } else {
+                const data = await response.json().catch(() => ({}));
+                clearResult = { ok: false, message: data.error || 'Failed to clear records' };
+            }
+        } catch (e) {
+            clearResult = { ok: false, message: e.message };
+        }
+        isClearing = false;
+    }
 
     $: if (!settingsChanged) {
         if ($settings.route_table_limit) {
@@ -198,7 +262,7 @@
                         <li>
                             <button
                                 type="button"
-                                class="{activeMenuItem === item.id ? 'active' : ''}"
+                                class="{activeMenuItem === item.id ? 'active' : ''} {item.danger ? 'text-error' : ''}"
                                 on:click={() => activeMenuItem = item.id}
                             >
                                 {item.label}
@@ -382,6 +446,56 @@
                             </div>
                         </form>
 
+                    {:else if activeMenuItem === 'danger-zone'}
+                        <h4 class="text-lg font-semibold mb-6 text-error">Danger Zone</h4>
+
+                        <div class="mb-8">
+                            <p class="text-xl font-extralight tracking-wider mb-2">Clear record holders</p>
+                            <p class="text-m text-base-content/70 mb-4">
+                                Empties the selected leaderboards for every period, including all-time.
+                                Archived flight history is not deleted, but the leaderboards only rebuild
+                                from aircraft seen after clearing. This cannot be undone.
+                            </p>
+
+                            <label class="flex items-center gap-2 mb-3 font-medium">
+                                <input
+                                    type="checkbox"
+                                    class="checkbox checkbox-sm"
+                                    checked={allCategoriesSelected}
+                                    on:change={(e) => toggleAllCategories(e.target.checked)}
+                                />
+                                <span class="text-sm">Select all</span>
+                            </label>
+
+                            <div class="grid grid-cols-2 gap-2 max-w-md mb-6">
+                                {#each recordCategories as category (category.key)}
+                                    <label class="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            class="checkbox checkbox-sm"
+                                            checked={selectedCategories.has(category.key)}
+                                            on:change={(e) => toggleCategory(category.key, e.target.checked)}
+                                        />
+                                        <span class="text-sm">{category.label}</span>
+                                    </label>
+                                {/each}
+                            </div>
+
+                            <div class="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    class="btn btn-error"
+                                    on:click={openClearConfirm}
+                                    disabled={selectedCategories.size === 0 || isClearing}
+                                >
+                                    {isClearing ? 'Clearing...' : 'Clear selected'}
+                                </button>
+                                {#if clearResult}
+                                    <span class="text-sm {clearResult.ok ? 'text-success' : 'text-error'}">{clearResult.message}</span>
+                                {/if}
+                            </div>
+                        </div>
+
                     {:else if activeMenuItem === 'about'}
                         <div class="text-center mx-auto">
                             <div class="flex items-center justify-center gap-6 mb-2">
@@ -432,6 +546,24 @@
                     </div>
                 {/if}
             </div>
+        </div>
+    </div>
+</dialog>
+
+<!-- Kept outside the settings dialog so it stacks on top of it rather than inside it. -->
+<dialog id="clear-records-modal" class="modal">
+    <div class="modal-box">
+        <h3 class="text-lg font-bold text-error">Clear record holders?</h3>
+        <p class="py-4">
+            This permanently deletes the leaderboard entries for the
+            {selectedCategories.size} selected categor{selectedCategories.size === 1 ? 'y' : 'ies'},
+            across every period. This cannot be undone.
+        </p>
+        <div class="modal-action">
+            <form method="dialog">
+                <button class="btn">Cancel</button>
+            </form>
+            <button class="btn btn-error" on:click={clearSelectedRecords}>Yes, clear</button>
         </div>
     </div>
 </dialog>
