@@ -62,10 +62,23 @@ func updateRoutes(pg *postgres) {
 		return
 	}
 
-	insertRoutes(pg, routes)
+	matchedCallsigns := insertRoutes(pg, routes)
 
-	existing = append(existing, new...)
+	var retry []Aircraft
+	for _, a := range new {
+		switch classifyRouteAttempt(matchedCallsigns[a.Flight], a.RouteAttempts) {
+		case routeMatched, routeExhausted:
+			existing = append(existing, a)
+		case routeRetry:
+			retry = append(retry, a)
+		}
+	}
+
 	MarkProcessed(pg, "route_processed", existing)
+
+	if len(retry) > 0 {
+		IncrementRouteAttempts(pg, retry)
+	}
 
 }
 
