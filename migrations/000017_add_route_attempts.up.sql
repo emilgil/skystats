@@ -1,0 +1,1 @@
+ALTER TABLE aircraft_data ADD COLUMN route_attempts SMALLINT NOT NULL DEFAULT 0;
