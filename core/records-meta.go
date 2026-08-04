@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // recordCategory is the single source of truth for how a leaderboard category
 // is named and sorted. Shared by the ingest write path, the read/API path, and
@@ -19,6 +22,21 @@ var recordCategories = map[string]recordCategory{
 	"furthest_flown": {Name: "furthest_flown", MetricName: "distance_flown", KeepMax: true},
 	"longest_route":  {Name: "longest_route", MetricName: "route_distance", KeepMax: true},
 	"most_remaining": {Name: "most_remaining", MetricName: "distance_remaining", KeepMax: true},
+}
+
+// validateRecordCategories reports whether every key in the list is a known
+// category. It validates the whole list before the caller deletes anything, so
+// an unknown key late in the list cannot leave earlier categories half-cleared.
+func validateRecordCategories(categories []string) error {
+	if len(categories) == 0 {
+		return fmt.Errorf("no record categories given")
+	}
+	for _, cat := range categories {
+		if _, ok := recordCategories[cat]; !ok {
+			return fmt.Errorf("unknown record category: %s", cat)
+		}
+	}
+	return nil
 }
 
 // bestFirstSQL returns the ORDER BY direction that puts the best record first

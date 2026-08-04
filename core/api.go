@@ -144,6 +144,11 @@ func (s *APIServer) Start() {
 			notifications.POST("/test", s.testNotification)
 		}
 
+		records := api.Group("/records")
+		{
+			records.DELETE("", s.clearRecordsHandler)
+		}
+
 		watches := api.Group("/watches")
 		{
 			// Static GET children only, and :id only on PUT/DELETE, so there is
@@ -589,6 +594,35 @@ func (s *APIServer) getRecords(c *gin.Context, category string) {
 	}
 
 	c.JSON(http.StatusOK, out)
+}
+
+// clearRecordsHandler empties the leaderboards for the requested categories.
+// Destructive and irreversible by design; the UI gates it behind a confirmation
+// dialog in its Danger Zone section.
+func (s *APIServer) clearRecordsHandler(c *gin.Context) {
+
+	var payload struct {
+		Categories []string `json:"categories"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	if err := validateRecordCategories(payload.Categories); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	cleared, err := clearRecords(s.pg, payload.Categories)
+	if err != nil {
+		log.Error().Err(err).Msg("clearRecordsHandler() - clear failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unable to clear records"})
+		return
+	}
+
+	log.Info().Interface("cleared", cleared).Msg("Record leaderboards cleared")
+	c.JSON(http.StatusOK, gin.H{"cleared": cleared})
 }
 
 func (s *APIServer) getTopAircraftTypes(c *gin.Context, period string, flightoraircraft string) {

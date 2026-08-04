@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -63,6 +64,42 @@ func runLeaderboardSweep(pg *postgres) {
 		}
 		log.Debug().Msgf("Leaderboard sweep %s removed %d rows", period, ct.RowsAffected())
 	}
+}
+
+// clearRecords empties the leaderboards for the given categories, across every
+// period_type including all_time. It never touches flight_history: clearing a
+// leaderboard does not delete the archived flights that fed it. All categories
+// go in one transaction, so a failure part-way leaves every leaderboard intact
+// rather than half-cleared.
+//
+// Cleared rows do not come back. The source flights in aircraft_data stay
+// flagged as processed for their category, so ingest only rebuilds the list
+// from flights seen after the clear.
+func clearRecords(pg *postgres, categories []string) (map[string]int64, error) {
+	if err := validateRecordCategories(categories); err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	tx, err := pg.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) // no-op once committed
+
+	cleared := make(map[string]int64, len(categories))
+	for _, category := range categories {
+		ct, err := tx.Exec(ctx, `DELETE FROM records WHERE category = $1`, category)
+		if err != nil {
+			return nil, fmt.Errorf("clearing category %s: %w", category, err)
+		}
+		cleared[category] += ct.RowsAffected() // += so a repeated key still totals correctly
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return cleared, nil
 }
 
 // runHistoryRetention deletes flight_history older than history_retention_days

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,6 +45,44 @@ func TestPeriodsForFirstSeen_TenDaysOld(t *testing.T) {
 	want := []string{"30d", "90d", "365d", "all_time"}
 	if !equalStrings(got, want) {
 		t.Errorf("10-day-old flight: got %v want %v", got, want)
+	}
+}
+
+func TestValidateRecordCategories_AllKnown(t *testing.T) {
+	all := []string{"fastest", "slowest", "highest", "lowest",
+		"furthest_flown", "longest_route", "most_remaining"}
+	if err := validateRecordCategories(all); err != nil {
+		t.Errorf("all seven categories should validate, got %v", err)
+	}
+}
+
+func TestValidateRecordCategories_Empty(t *testing.T) {
+	if err := validateRecordCategories(nil); err == nil {
+		t.Error("empty category list should be rejected")
+	}
+}
+
+func TestValidateRecordCategories_Unknown(t *testing.T) {
+	err := validateRecordCategories([]string{"fastest", "not_a_category"})
+	if err == nil {
+		t.Fatal("unknown category should be rejected")
+	}
+	if !strings.Contains(err.Error(), "not_a_category") {
+		t.Errorf("error should name the offending category, got %q", err)
+	}
+}
+
+func TestValidateRecordCategories_RejectsBeforeAnyValidOnes(t *testing.T) {
+	// The unknown key is last, so a caller that validates the whole list up
+	// front cannot have deleted "fastest" by the time it finds out.
+	if err := validateRecordCategories([]string{"fastest", "highest", "bogus"}); err == nil {
+		t.Error("a trailing unknown category should still fail the whole list")
+	}
+}
+
+func TestValidateRecordCategories_Duplicates(t *testing.T) {
+	if err := validateRecordCategories([]string{"fastest", "fastest"}); err != nil {
+		t.Errorf("duplicates are harmless for a delete, got %v", err)
 	}
 }
 
