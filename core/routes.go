@@ -19,6 +19,29 @@ func getDistanceBetweenAirports(origin []float64, destination []float64) *float6
 	return &distance
 }
 
+const maxRouteAttempts = 5
+
+type routeOutcome int
+
+const (
+	routeMatched routeOutcome = iota
+	routeRetry
+	routeExhausted
+)
+
+// classifyRouteAttempt decides what to do with a single aircraft after one
+// adsbdb lookup round: keep the match, try again next tick, or give up for
+// good once maxRouteAttempts lookups have all failed.
+func classifyRouteAttempt(matched bool, attemptsSoFar int) routeOutcome {
+	if matched {
+		return routeMatched
+	}
+	if attemptsSoFar+1 >= maxRouteAttempts {
+		return routeExhausted
+	}
+	return routeRetry
+}
+
 func updateRoutes(pg *postgres) {
 
 	aircrafts := unprocessedRoutes(pg)
