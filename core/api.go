@@ -149,6 +149,11 @@ func (s *APIServer) Start() {
 			records.DELETE("", s.clearRecordsHandler)
 		}
 
+		search := api.Group("/search")
+		{
+			search.GET("/flights", s.getFlightSearch)
+		}
+
 		watches := api.Group("/watches")
 		{
 			// Static GET children only, and :id only on PUT/DELETE, so there is
