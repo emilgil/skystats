@@ -27,6 +27,7 @@
         const seq = ++requestSeq;
         loading = true;
         error = null;
+        searched = true;
         try {
             const response = await fetch(buildFlightSearchUrl(filters, sort, dir, page, pageSize));
             if (!response.ok) {
@@ -37,7 +38,6 @@
             if (seq !== requestSeq) return;
             results = result.results;
             totalCount = result.total_count;
-            searched = true;
         } catch (err) {
             if (seq !== requestSeq) return;
             error = err.message;
