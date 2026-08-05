@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"sync"
 	"time"
 )
@@ -101,4 +102,51 @@ func (r *routeOnSight) pruneLocked() {
 			delete(r.cooldown, callsign)
 		}
 	}
+}
+
+// routeCandidates returns the aircraft in a snapshot whose callsign has no
+// route yet, one entry per callsign.
+//
+// The enrichment map is the one Current Sightings already fetched for this
+// tick, so spotting a missing route costs no extra query. A route counts as
+// missing only when both airport ICAO codes are absent: insertRoutes never
+// stores a row without a resolved pair of airports, but an individual IATA code
+// can be blank for a minor field.
+func routeCandidates(snapshot []Aircraft, enrichment map[string]aircraftEnrichment) []Aircraft {
+	var candidates []Aircraft
+	seen := map[string]bool{}
+
+	for _, a := range snapshot {
+		if a.Flight == "" || seen[a.Flight] {
+			continue
+		}
+
+		e := enrichment[a.Hex]
+		if e.OriginIcao != nil || e.DestinationIcao != nil {
+			continue
+		}
+
+		seen[a.Flight] = true
+		candidates = append(candidates, a)
+	}
+
+	return candidates
+}
+
+// routeLookupSubjects copies each aircraft's live position into the fields the
+// request builder reads.
+//
+// buildRouteApiRequestBody takes its position from LastSeenLat/LastSeenLon and
+// skips any aircraft where they are not valid. Only the database path fills
+// those in, so a snapshot straight off the feed would produce an empty request.
+func routeLookupSubjects(aircrafts []Aircraft) []Aircraft {
+	subjects := make([]Aircraft, 0, len(aircrafts))
+
+	for _, a := range aircrafts {
+		a.LastSeenLat = sql.NullFloat64{Float64: a.Lat, Valid: true}
+		a.LastSeenLon = sql.NullFloat64{Float64: a.Lon, Valid: true}
+		subjects = append(subjects, a)
+	}
+
+	return subjects
 }

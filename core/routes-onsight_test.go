@@ -86,3 +86,60 @@ func TestPruneDropsExpiredCooldownsOnly(t *testing.T) {
 		t.Error("a live cooldown was swept away")
 	}
 }
+
+func TestRouteCandidatesSelectsAircraftWithoutRoute(t *testing.T) {
+	snapshot := []Aircraft{{Hex: "abc123", Flight: "SAS1456"}}
+
+	got := routeCandidates(snapshot, map[string]aircraftEnrichment{"abc123": {}})
+
+	if len(got) != 1 || got[0].Flight != "SAS1456" {
+		t.Fatalf("got %+v, want the single aircraft that has no route", got)
+	}
+}
+
+func TestRouteCandidatesSkipsAircraftThatAlreadyHaveARoute(t *testing.T) {
+	destination := "ESGG"
+	snapshot := []Aircraft{{Hex: "abc123", Flight: "RYR4TR"}}
+	enrichment := map[string]aircraftEnrichment{
+		"abc123": {DestinationIcao: &destination},
+	}
+
+	if got := routeCandidates(snapshot, enrichment); len(got) != 0 {
+		t.Fatalf("selected %d candidates, want 0 — the route is already known", len(got))
+	}
+}
+
+func TestRouteCandidatesSkipsEmptyCallsigns(t *testing.T) {
+	snapshot := []Aircraft{{Hex: "abc123", Flight: ""}}
+
+	if got := routeCandidates(snapshot, map[string]aircraftEnrichment{}); len(got) != 0 {
+		t.Fatalf("selected %d candidates, want 0 — there is no callsign to look up", len(got))
+	}
+}
+
+func TestRouteCandidatesDeduplicatesCallsigns(t *testing.T) {
+	snapshot := []Aircraft{
+		{Hex: "abc123", Flight: "SAS1456"},
+		{Hex: "def456", Flight: "SAS1456"},
+	}
+
+	got := routeCandidates(snapshot, map[string]aircraftEnrichment{})
+
+	if len(got) != 1 {
+		t.Fatalf("selected %d candidates, want 1 — one callsign is asked about once", len(got))
+	}
+}
+
+func TestRouteLookupSubjectsCopiesLivePositionIntoLastSeen(t *testing.T) {
+	subjects := routeLookupSubjects([]Aircraft{{Flight: "SAS1456", Lat: 57.1, Lon: 12.28}})
+
+	if len(subjects) != 1 {
+		t.Fatalf("got %d subjects, want 1", len(subjects))
+	}
+	if !subjects[0].LastSeenLat.Valid || subjects[0].LastSeenLat.Float64 != 57.1 {
+		t.Errorf("LastSeenLat = %+v, want 57.1 marked valid — buildRouteApiRequestBody reads it", subjects[0].LastSeenLat)
+	}
+	if !subjects[0].LastSeenLon.Valid || subjects[0].LastSeenLon.Float64 != 12.28 {
+		t.Errorf("LastSeenLon = %+v, want 12.28 marked valid", subjects[0].LastSeenLon)
+	}
+}
