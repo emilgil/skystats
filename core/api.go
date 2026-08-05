@@ -152,6 +152,7 @@ func (s *APIServer) Start() {
 		search := api.Group("/search")
 		{
 			search.GET("/flights", s.getFlightSearch)
+			search.GET("/flights/export", s.exportFlightSearchCSV)
 		}
 
 		watches := api.Group("/watches")
