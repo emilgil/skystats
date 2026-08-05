@@ -17,11 +17,11 @@ export function buildFlightSearchParams(filters, sort, dir, page, pageSize) {
     if (filters.country) params.set('country', filters.country);
     if (filters.origin) params.set('origin', filters.origin);
     if (filters.destination) params.set('destination', filters.destination);
-    if (filters.altitudeValue !== '') {
+    if (filters.altitudeValue !== '' && filters.altitudeValue !== null) {
         params.set('altitude_op', filters.altitudeOp);
         params.set('altitude_value', filters.altitudeValue);
     }
-    if (filters.speedValue !== '') {
+    if (filters.speedValue !== '' && filters.speedValue !== null) {
         params.set('speed_op', filters.speedOp);
         params.set('speed_value', filters.speedValue);
     }

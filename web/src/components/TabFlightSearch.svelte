@@ -27,6 +27,7 @@
         const seq = ++requestSeq;
         loading = true;
         error = null;
+        exportMessage = null;
         searched = true;
         try {
             const response = await fetch(buildFlightSearchUrl(filters, sort, dir, page, pageSize));
