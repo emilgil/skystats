@@ -112,8 +112,48 @@ func TestRouteCandidatesSkipsAircraftThatAlreadyHaveARoute(t *testing.T) {
 func TestRouteCandidatesSkipsEmptyCallsigns(t *testing.T) {
 	snapshot := []Aircraft{{Hex: "abc123", Flight: ""}}
 
-	if got := routeCandidates(snapshot, map[string]aircraftEnrichment{}); len(got) != 0 {
+	if got := routeCandidates(snapshot, map[string]aircraftEnrichment{"abc123": {}}); len(got) != 0 {
 		t.Fatalf("selected %d candidates, want 0 — there is no callsign to look up", len(got))
+	}
+}
+
+func TestRouteCandidatesReturnsNothingWhenEnrichmentQueryFailed(t *testing.T) {
+	// enrichAircraftSnapshot returns an empty map, not one entry per hex, when
+	// its query fails. If routeCandidates read that the same as "no aircraft
+	// here has a route", every visible callsign would become a candidate —
+	// including ones whose routes are already known — every single tick for
+	// as long as the failure lasts. It must select nothing instead and let
+	// the next tick's enrichment try again.
+	snapshot := []Aircraft{
+		{Hex: "abc123", Flight: "SAS1456"},
+		{Hex: "def456", Flight: "RYR4TR"},
+	}
+
+	got := routeCandidates(snapshot, map[string]aircraftEnrichment{})
+
+	if len(got) != 0 {
+		t.Fatalf("selected %d candidates from a snapshot paired with an empty enrichment map, want 0 — an empty map alongside a non-empty snapshot means the enrichment query failed, not that every aircraft is routeless", len(got))
+	}
+}
+
+func TestRouteCandidatesCapsAtMaxRouteOnSightBatch(t *testing.T) {
+	// A cold start against an empty route_data table makes every aircraft in
+	// range a candidate on the very first tick. Without a cap here, that one
+	// tick could send a request carrying every aircraft currently in range,
+	// far beyond the 100-callsign batch size updateRoutes enforces in
+	// routes.go for the same reason.
+	snapshot := make([]Aircraft, 0, maxRouteOnSightBatch+10)
+	enrichment := make(map[string]aircraftEnrichment, maxRouteOnSightBatch+10)
+	for i := 0; i < maxRouteOnSightBatch+10; i++ {
+		hex := fmt.Sprintf("hex%d", i)
+		snapshot = append(snapshot, Aircraft{Hex: hex, Flight: fmt.Sprintf("FLT%d", i)})
+		enrichment[hex] = aircraftEnrichment{} // a real "no route yet" answer for every hex
+	}
+
+	got := routeCandidates(snapshot, enrichment)
+
+	if len(got) != maxRouteOnSightBatch {
+		t.Fatalf("selected %d candidates, want the batch capped at %d", len(got), maxRouteOnSightBatch)
 	}
 }
 
@@ -122,8 +162,12 @@ func TestRouteCandidatesDeduplicatesCallsigns(t *testing.T) {
 		{Hex: "abc123", Flight: "SAS1456"},
 		{Hex: "def456", Flight: "SAS1456"},
 	}
+	enrichment := map[string]aircraftEnrichment{
+		"abc123": {},
+		"def456": {},
+	}
 
-	got := routeCandidates(snapshot, map[string]aircraftEnrichment{})
+	got := routeCandidates(snapshot, enrichment)
 
 	if len(got) != 1 {
 		t.Fatalf("selected %d candidates, want 1 — one callsign is asked about once", len(got))

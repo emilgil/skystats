@@ -22,6 +22,14 @@ const (
 	// Expired entries are swept once the map grows past this, which bounds it
 	// without a timer or a background goroutine.
 	routeCooldownPruneAt = 500
+
+	// maxRouteOnSightBatch mirrors the 100-callsign cap updateRoutes applies
+	// in routes.go. The claim guard normally damps the fast path to a
+	// trickle, but on first start against an empty route_data table every
+	// aircraft in range can be a candidate on the very first tick, so the cap
+	// must be enforced here too — before claiming, so a dropped callsign
+	// never leaks a claim it will now never be released from.
+	maxRouteOnSightBatch = 100
 )
 
 // routeFetcher is assigned once at startup, alongside the other singletons in
@@ -107,14 +115,32 @@ func (r *routeOnSight) pruneLocked() {
 }
 
 // routeCandidates returns the aircraft in a snapshot whose callsign has no
-// route yet, one entry per callsign.
+// route yet, one entry per callsign, capped at the same 100-callsign batch
+// size the 300s ladder enforces in routes.go.
 //
 // The enrichment map is the one Current Sightings already fetched for this
 // tick, so spotting a missing route costs no extra query. A route counts as
 // missing only when both airport ICAO codes are absent: insertRoutes never
 // stores a row without a resolved pair of airports, but an individual IATA code
 // can be blank for a minor field.
+//
+// enrichAircraftSnapshot returns an empty map on query failure rather than
+// its usual per-hex rows, and that is indistinguishable here from "every
+// aircraft is routeless" unless we check for it explicitly.
+// fetchAircraftEnrichment builds its result with unnest, so a successful
+// query always yields exactly one row per hex passed in; an empty map next to
+// a non-empty snapshot can therefore only mean the query failed. Selecting
+// every callsign as a candidate in that case would turn a single failed
+// enrichment query into a full-snapshot route lookup on every following
+// tick, since insertRoutes keeps "matching" already-known routes and the
+// claim guard's cooldown is deleted on every match. Do nothing this tick and
+// let the next tick's enrichment try again instead — do not "simplify" this
+// away by trusting an empty map.
 func routeCandidates(snapshot []Aircraft, enrichment map[string]aircraftEnrichment) []Aircraft {
+	if len(snapshot) > 0 && len(enrichment) == 0 {
+		return nil
+	}
+
 	var candidates []Aircraft
 	seen := map[string]bool{}
 
@@ -130,6 +156,10 @@ func routeCandidates(snapshot []Aircraft, enrichment map[string]aircraftEnrichme
 
 		seen[a.Flight] = true
 		candidates = append(candidates, a)
+
+		if len(candidates) == maxRouteOnSightBatch {
+			break
+		}
 	}
 
 	return candidates
@@ -204,4 +234,6 @@ func fetchRoutesOnSight(pg *postgres, claimed []Aircraft) {
 	}
 
 	matched = insertRoutes(pg, routes)
+
+	log.Info().Int("requested", len(claimed)).Int("matched", len(matched)).Msg("fetchRoutesOnSight() - on-sight route lookup complete")
 }
