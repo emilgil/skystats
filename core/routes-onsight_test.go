@@ -52,6 +52,7 @@ func TestClaimGrantedAfterCooldownExpires(t *testing.T) {
 func TestReleaseUsesTheCooldownItIsGiven(t *testing.T) {
 	r := newRouteOnSight()
 	r.claim("SAS1456")
+	now := time.Now()
 	r.release("SAS1456", false, r.errorCooldown)
 
 	until, ok := r.cooldown["SAS1456"]
@@ -59,8 +60,13 @@ func TestReleaseUsesTheCooldownItIsGiven(t *testing.T) {
 		t.Fatal("no cooldown recorded for an unmatched callsign")
 	}
 
-	if until.After(time.Now().Add(routeUnknownCooldown)) {
-		t.Fatalf("cooldown runs to %v, want the shorter error cooldown", until)
+	// Verify the cooldown is approximately errorCooldown (2 min), not unknownCooldown (30 min).
+	// If release() ignored its parameter and used unknownCooldown, until would be ~30 min away, not ~2 min.
+	expected := now.Add(r.errorCooldown)
+	tolerance := 100 * time.Millisecond
+
+	if until.Before(expected.Add(-tolerance)) || until.After(expected.Add(tolerance)) {
+		t.Fatalf("cooldown runs to %v, want around %v (±%v ms)", until, expected, tolerance.Milliseconds())
 	}
 }
 
