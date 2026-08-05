@@ -56,6 +56,7 @@ func updateAircraftDatabase(pg *postgres) {
 	// One enrichment round trip per tick, shared by every consumer of the
 	// snapshot.
 	enrichment := enrichAircraftSnapshot(pg, aircraftsInRange)
+	requestMissingRoutes(pg, aircraftsInRange, enrichment)
 	refreshCurrentSightings(response.Now, aircraftsInRange, enrichment)
 	evaluateWatches(pg, aircraftsInRange, enrichment)
 }

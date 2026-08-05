@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // How long the on-sight path waits before asking about a callsign again.
@@ -149,4 +151,57 @@ func routeLookupSubjects(aircrafts []Aircraft) []Aircraft {
 	}
 
 	return subjects
+}
+
+// requestMissingRoutes starts a lookup for every callsign in the snapshot that
+// still has no route.
+//
+// Selection and claiming happen on the caller's goroutine so the pending set is
+// up to date before the tick returns. The network call and the database write
+// happen on a goroutine of their own, because the lookup's 5s timeout is longer
+// than the 2s tick it would otherwise block.
+func requestMissingRoutes(pg *postgres, snapshot []Aircraft, enrichment map[string]aircraftEnrichment) {
+	if routeFetcher == nil {
+		return
+	}
+
+	var claimed []Aircraft
+	for _, a := range routeCandidates(snapshot, enrichment) {
+		if routeFetcher.claim(a.Flight) {
+			claimed = append(claimed, a)
+		}
+	}
+
+	if len(claimed) == 0 {
+		return
+	}
+
+	go fetchRoutesOnSight(pg, claimed)
+}
+
+// fetchRoutesOnSight asks the route API about the claimed aircraft in one
+// request and stores whatever comes back.
+//
+// Every claim is released on the way out, whichever path is taken, so a failure
+// can never leave a callsign reserved for good.
+func fetchRoutesOnSight(pg *postgres, claimed []Aircraft) {
+	matched := map[string]bool{}
+	cooldown := routeFetcher.unknownCooldown
+
+	defer func() {
+		for _, a := range claimed {
+			routeFetcher.release(a.Flight, matched[a.Flight], cooldown)
+		}
+	}()
+
+	routes, err := getRoutes(routeLookupSubjects(claimed))
+	if err != nil {
+		// The network failed, which says nothing about these callsigns, so they
+		// go on the short cooldown rather than the long one.
+		cooldown = routeFetcher.errorCooldown
+		log.Warn().Err(err).Int("callsigns", len(claimed)).Msg("fetchRoutesOnSight() - route lookup failed")
+		return
+	}
+
+	matched = insertRoutes(pg, routes)
 }
