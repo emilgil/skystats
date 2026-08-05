@@ -14,8 +14,19 @@ import (
 	"github.com/tomcarman/skystats/data"
 )
 
+// getDistanceBetweenAirports returns the great-circle distance in kilometers
+// between two airports, each given as a {lon, lat} pair.
+//
+// This deliberately does not use cheap-ruler (getRuler() in aircraft.go).
+// Cheap-ruler is anchored at the receiver's own latitude, so it would make a
+// fixed pair of airports resolve to a different distance depending on where
+// the receiver happens to stand, and it collapses badly on the long
+// east-west routes these figures are most often read for.
 func getDistanceBetweenAirports(origin []float64, destination []float64) *float64 {
-	distance := getRuler().Distance(origin, destination)
+	originLon, originLat := origin[0], origin[1]
+	destinationLon, destinationLat := destination[0], destination[1]
+
+	distance := haversineDistanceKm(originLat, originLon, destinationLat, destinationLon)
 	return &distance
 }
 

@@ -458,16 +458,14 @@ func getRouteData(pg *postgres, flight string) (*RouteData, error) {
 	return &route, nil
 }
 
+// getDestinationDistance returns the great-circle distance in kilometers from
+// an aircraft's current position to its destination airport.
+//
+// This shares haversine with getDistanceBetweenAirports on purpose: the Above
+// Me progress bar computes distance travelled as route_distance minus this
+// value, so the two have to come from the same formula or the bar reports a
+// position the aircraft was never at.
 func getDestinationDistance(currentLat, currentLon, destLat, destLon float64) float64 {
-	ruler, err := cheapruler.NewCheapruler(currentLat, "kilometers")
-	if err != nil {
-		log.Error().Err(err).Msg("Error creating ruler for destination distance")
-		return 0
-	}
-
-	currentLoc := []float64{currentLon, currentLat}
-	destLoc := []float64{destLon, destLat}
-
-	distance := ruler.Distance(currentLoc, destLoc)
+	distance := haversineDistanceKm(currentLat, currentLon, destLat, destLon)
 	return math.Round(distance*100) / 100
 }

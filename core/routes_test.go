@@ -35,3 +35,32 @@ func TestClassifyRouteAttempt_ExhaustedPastCap(t *testing.T) {
 		t.Errorf("expected routeExhausted past the cap, got %v", outcome)
 	}
 }
+
+func TestGetDistanceBetweenAirports_LongEastWestRoute(t *testing.T) {
+	// DOH (Hamad Intl) to IAH (Houston George Bush) spans ~147 degrees of
+	// longitude. A flat-plane approximation anchored at the receiver's
+	// latitude collapses on a route this long — cheap-ruler reports roughly
+	// 8900 km against a true great-circle distance of ~12930 km.
+	doha := []float64{51.6081, 25.2731}     // lon, lat
+	houston := []float64{-95.3414, 29.9844} // lon, lat
+
+	distance := getDistanceBetweenAirports(doha, houston)
+	if distance == nil {
+		t.Fatal("expected a distance, got nil")
+	}
+	if *distance < 12800 || *distance > 13050 {
+		t.Errorf("expected DOH-IAH distance between 12800-13050 km, got %.2f km", *distance)
+	}
+}
+
+func TestGetDistanceBetweenAirports_SameAirport(t *testing.T) {
+	lhr := []float64{-0.4543, 51.4700} // lon, lat
+
+	distance := getDistanceBetweenAirports(lhr, lhr)
+	if distance == nil {
+		t.Fatal("expected a distance, got nil")
+	}
+	if *distance > 0.0001 {
+		t.Errorf("expected ~0 km for identical airports, got %.4f km", *distance)
+	}
+}

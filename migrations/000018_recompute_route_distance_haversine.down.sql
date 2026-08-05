@@ -1,0 +1,12 @@
+-- Deliberately a no-op.
+--
+-- The pre-migration values came from a cheap-ruler approximation anchored at
+-- the receiver's latitude, which is an environment variable (LAT) and is not
+-- recorded anywhere in the database. There is no way to reconstruct them from
+-- the stored data, and reverting to a guessed anchor latitude would produce
+-- numbers that were never actually in this table.
+--
+-- Rolling back the code alone is enough: getDistanceBetweenAirports() would
+-- go back to cheap-ruler and rewrite each row with its old-style value the
+-- next time that callsign's route is resolved.
+SELECT 1;
