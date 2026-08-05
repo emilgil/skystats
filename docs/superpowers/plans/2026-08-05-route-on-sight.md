@@ -588,13 +588,16 @@ The measurement that decides whether this worked. The spec's baseline is **66.7%
 
 - [ ] **Step 1: Confirm the branch is not behind main**
 
+Check **local** `main`, not just `origin/main`. This repo merges to local main and pushes later, so `origin/main` can lag far behind what is actually current — on 2026-08-05 local main was 13 commits ahead of origin while `origin/main` still matched this branch's base. Deploying ships a tar of tracked files and would silently revert anything newer.
+
 ```bash
 cd /mnt/c/temp/github/claude/skystats-route-on-sight
 git fetch origin
-git log --oneline feat/route-on-sight..origin/main
+echo "--- behind local main ---"; git log --oneline feat/route-on-sight..main
+echo "--- behind origin/main ---"; git log --oneline feat/route-on-sight..origin/main
 ```
 
-Expected: empty output. Anything listed must be merged in before deploying.
+Expected: both empty. Anything listed must be merged into this branch before deploying.
 
 - [ ] **Step 2: Deploy**
 
