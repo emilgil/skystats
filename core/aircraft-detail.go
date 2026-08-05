@@ -3,13 +3,57 @@ package main
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 )
+
+// personalBestRecord is one badge on the aircraft detail card: this
+// aircraft's own best/worst reading for one metric, and whether that same
+// category also currently places in the fleet-wide top-100 records table.
+type personalBestRecord struct {
+	Category       string
+	MetricName     string
+	Value          float64
+	IsGlobalRecord bool
+}
+
+// buildPersonalBestRecords assembles the badge list for one aircraft from its
+// freshly-aggregated personal-best values (nil = no qualifying observation
+// for that metric, so the category is omitted entirely) and the set of
+// categories where this hex currently holds a fleet-wide record. Order is
+// fixed (fastest, slowest, highest, lowest, longest_route, furthest_flown,
+// most_remaining) to match the Speed/Altitude/Distance grouping the
+// frontend renders.
+func buildPersonalBestRecords(maxGs, minGs, maxAlt, minAlt, maxRouteDist, maxDistFlown, maxDistRemaining *float64, globalRecordCategories map[string]bool) []personalBestRecord {
+	candidates := []struct {
+		category string
+		value    *float64
+	}{
+		{"fastest", maxGs},
+		{"slowest", minGs},
+		{"highest", maxAlt},
+		{"lowest", minAlt},
+		{"longest_route", maxRouteDist},
+		{"furthest_flown", maxDistFlown},
+		{"most_remaining", maxDistRemaining},
+	}
+	out := []personalBestRecord{}
+	for _, cand := range candidates {
+		if cand.value == nil {
+			continue
+		}
+		out = append(out, personalBestRecord{
+			Category:       cand.category,
+			MetricName:     recordCategories[cand.category].MetricName,
+			Value:          *cand.value,
+			IsGlobalRecord: globalRecordCategories[cand.category],
+		})
+	}
+	return out
+}
 
 // getAircraftDetail assembles a single aircraft's detail (identity, live status,
 // history, photo, interesting metadata) for the info modal. Read-only, on-demand.
@@ -167,46 +211,48 @@ func (s *APIServer) getAircraftDetail(c *gin.Context) {
 		}
 	}
 
-	// 5) Records this aircraft holds: best value per category, deduped across periods.
-	recRows, err := s.pg.db.Query(context.Background(), `
-		SELECT category, metric_name, metric_value::float8
-		FROM records
-		WHERE hex = $1`, hex)
+	// 5) Personal-best per category, computed fresh from this hex's full
+	// flight_history rather than the trimmed/windowed records leaderboard
+	// snapshot (which freezes at whatever value existed the one time a
+	// session row was processed — see
+	// docs/superpowers/specs/2026-08-03-unified-record-badges-spec.md).
+	var maxGs, minGs, maxAlt, minAlt, maxRouteDist, maxDistFlown, maxDistRemaining *float64
+	err = s.pg.db.QueryRow(context.Background(), `
+		SELECT MAX(ground_speed)::float8, MIN(ground_speed)::float8,
+		       MAX(barometric_altitude)::float8, MIN(barometric_altitude)::float8,
+		       MAX(route_distance)::float8, MAX(distance_flown)::float8, MAX(distance_remaining)::float8
+		FROM flight_history
+		WHERE hex = $1`, hex).
+		Scan(&maxGs, &minGs, &maxAlt, &minAlt, &maxRouteDist, &maxDistFlown, &maxDistRemaining)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	best := map[string]gin.H{}
-	for recRows.Next() {
-		var category, metricName string
-		var value float64
-		if err := recRows.Scan(&category, &metricName, &value); err != nil {
-			continue
-		}
-		cur, ok := best[category]
-		if !ok {
-			best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
-			continue
-		}
-		// recordCategories[category].KeepMax: true when a larger value is the record.
-		if recordCategories[category].KeepMax {
-			if value > cur["value"].(float64) {
-				best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
-			}
-		} else {
-			if value < cur["value"].(float64) {
-				best[category] = gin.H{"category": category, "metric_name": metricName, "value": value}
-			}
-		}
+
+	globalRecordCategories := map[string]bool{}
+	catRows, err := s.pg.db.Query(context.Background(), `SELECT DISTINCT category FROM records WHERE hex = $1`, hex)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	recRows.Close()
+	for catRows.Next() {
+		var category string
+		if err := catRows.Scan(&category); err != nil {
+			continue
+		}
+		globalRecordCategories[category] = true
+	}
+	catRows.Close()
+
 	records := []gin.H{}
-	for _, r := range best {
-		records = append(records, r)
+	for _, r := range buildPersonalBestRecords(maxGs, minGs, maxAlt, minAlt, maxRouteDist, maxDistFlown, maxDistRemaining, globalRecordCategories) {
+		records = append(records, gin.H{
+			"category":         r.Category,
+			"metric_name":      r.MetricName,
+			"value":            r.Value,
+			"is_global_record": r.IsGlobalRecord,
+		})
 	}
-	sort.Slice(records, func(i, j int) bool {
-		return records[i]["category"].(string) < records[j]["category"].(string)
-	})
 	resp["records"] = records
 
 	// 6) Recent observations (visits) from flight_history, newest first, max 10.
