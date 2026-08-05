@@ -96,6 +96,7 @@ func main() {
 	// Initialise the process-wide notification sender used by the interesting
 	// and record triggers.
 	notifier = NewNotificationService(pg)
+	routeFetcher = newRouteOnSight()
 
 	// Restore the watch match state so a restart does not re-notify for
 	// aircraft that were already matching.
