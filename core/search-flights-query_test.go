@@ -358,3 +358,144 @@ func TestFlightSearchRowToCSVRecordFormatsNumbers(t *testing.T) {
 		t.Errorf("distance_flown = %q, want 850.25", rec[idx("distance_flown")])
 	}
 }
+
+func TestFlightSearchRowToJSONFieldMapping(t *testing.T) {
+	firstSeen := mustParseTime(t, time.RFC3339, "2026-08-01T10:00:00Z")
+	lastSeen := mustParseTime(t, time.RFC3339, "2026-08-01T12:00:00Z")
+
+	r := flightSearchRow{
+		Hex:                        "4d201f",
+		Flight:                     strp("SAS123"),
+		Registration:               strp("SE-ABC"),
+		Type:                       strp("A320"),
+		FirstSeen:                  firstSeen,
+		LastSeen:                   &lastSeen,
+		GroundSpeed:                f64p(450.5),
+		IndicatedAirSpeed:          intp(280),
+		TrueAirSpeed:               intp(430),
+		BarometricAltitude:         intp(35000),
+		GeometricAltitude:          intp(35100),
+		DistanceFlown:              f64p(850.25),
+		RouteDistance:              f64p(900.5),
+		DistanceRemaining:          f64p(50.25),
+		OriginIataCode:             strp("ARN"),
+		OriginIcaoCode:             strp("ESSA"),
+		DestinationIataCode:        strp("CPH"),
+		DestinationIcaoCode:        strp("EKCH"),
+		Manufacturer:               strp("Airbus"),
+		Model:                      strp("A320neo"),
+		RegisteredOwnerCountryName: strp("Sweden"),
+		RegisteredOwnerCountryIso:  strp("SE"),
+		InterestingGroup:           strp("military"),
+		AirlineName:                strp("Scandinavian Airlines"),
+	}
+
+	j := flightSearchRowToJSON(r)
+
+	cases := []struct {
+		key  string
+		want any
+	}{
+		{"hex", r.Hex},
+		{"flight", r.Flight},
+		{"registration", r.Registration},
+		{"type", r.Type},
+		{"first_seen", r.FirstSeen},
+		{"last_seen", r.LastSeen},
+		{"ground_speed", r.GroundSpeed},
+		{"indicated_air_speed", r.IndicatedAirSpeed},
+		{"true_air_speed", r.TrueAirSpeed},
+		{"barometric_altitude", r.BarometricAltitude},
+		{"geometric_altitude", r.GeometricAltitude},
+		{"distance_flown", r.DistanceFlown},
+		{"route_distance", r.RouteDistance},
+		{"distance_remaining", r.DistanceRemaining},
+		{"origin_iata_code", r.OriginIataCode},
+		{"origin_icao_code", r.OriginIcaoCode},
+		{"destination_iata_code", r.DestinationIataCode},
+		{"destination_icao_code", r.DestinationIcaoCode},
+		{"manufacturer", r.Manufacturer},
+		{"model", r.Model},
+		{"registered_owner_country_name", r.RegisteredOwnerCountryName},
+		{"registered_owner_country_iso_name", r.RegisteredOwnerCountryIso},
+		{"interesting_group", r.InterestingGroup},
+		{"airline_name", r.AirlineName},
+	}
+
+	if len(j) != len(cases) {
+		t.Fatalf("gin.H has %d keys, want %d", len(j), len(cases))
+	}
+
+	for _, tc := range cases {
+		got, ok := j[tc.key]
+		if !ok {
+			t.Errorf("key %q missing from gin.H", tc.key)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
+func TestFlightSearchRowToJSONHandlesNils(t *testing.T) {
+	r := flightSearchRow{
+		Hex:       "4d201f",
+		FirstSeen: mustParseTime(t, time.RFC3339, "2026-08-01T10:00:00Z"),
+		// every other pointer field left nil
+	}
+
+	j := flightSearchRowToJSON(r)
+
+	// Each "want" is a nil pointer of the field's own type, not the bare
+	// literal nil: an interface{} wrapping a typed nil pointer is not ==
+	// untyped nil in Go, and comparing against the wrong nil-typed value
+	// would just as wrongly flag a correct result. Asserting the exact
+	// typed nil is what actually proves the pointer survived un-dereferenced.
+	nilCases := []struct {
+		key  string
+		want any
+	}{
+		{"flight", (*string)(nil)},
+		{"registration", (*string)(nil)},
+		{"type", (*string)(nil)},
+		{"last_seen", (*time.Time)(nil)},
+		{"ground_speed", (*float64)(nil)},
+		{"indicated_air_speed", (*int)(nil)},
+		{"true_air_speed", (*int)(nil)},
+		{"barometric_altitude", (*int)(nil)},
+		{"geometric_altitude", (*int)(nil)},
+		{"distance_flown", (*float64)(nil)},
+		{"route_distance", (*float64)(nil)},
+		{"distance_remaining", (*float64)(nil)},
+		{"origin_iata_code", (*string)(nil)},
+		{"origin_icao_code", (*string)(nil)},
+		{"destination_iata_code", (*string)(nil)},
+		{"destination_icao_code", (*string)(nil)},
+		{"manufacturer", (*string)(nil)},
+		{"model", (*string)(nil)},
+		{"registered_owner_country_name", (*string)(nil)},
+		{"registered_owner_country_iso_name", (*string)(nil)},
+		{"interesting_group", (*string)(nil)},
+		{"airline_name", (*string)(nil)},
+	}
+
+	for _, tc := range nilCases {
+		got, ok := j[tc.key]
+		if !ok {
+			t.Errorf("key %q missing from gin.H", tc.key)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s = %#v (%T), want nil %T", tc.key, got, got, tc.want)
+		}
+	}
+
+	// Non-pointer fields are unaffected by the nil pointers elsewhere in the row.
+	if j["hex"] != r.Hex {
+		t.Errorf("hex = %v, want %v", j["hex"], r.Hex)
+	}
+	if j["first_seen"] != r.FirstSeen {
+		t.Errorf("first_seen = %v, want %v", j["first_seen"], r.FirstSeen)
+	}
+}
