@@ -2,6 +2,7 @@
 // @ts-nocheck
     import { selectedHex, closeAircraftModal } from '../stores/aircraftModal';
     import { settings } from '../stores/settings';
+    import { IconTrophy } from '@tabler/icons-svelte';
 
     let data = null;
     let loading = false;
@@ -12,6 +13,14 @@
 
     $: disableTags = $settings['disable_planealertdb_tags']?.setting_value === 'true';
 
+    $: groupedBadges = data?.records
+        ? BADGE_GROUPS.map((group) => ({
+              records: group.categories
+                  .map((cat) => data.records.find((r) => r.category === cat))
+                  .filter(Boolean),
+          })).filter((group) => group.records.length > 0)
+        : [];
+
     const RECORD_LABELS = {
         fastest: { label: 'Fastest', unit: 'kt' },
         slowest: { label: 'Slowest', unit: 'kt' },
@@ -21,6 +30,12 @@
         longest_route: { label: 'Longest route', unit: 'km' },
         most_remaining: { label: 'Most remaining', unit: 'km' },
     };
+
+    const BADGE_GROUPS = [
+        { categories: ['fastest', 'slowest'] },
+        { categories: ['highest', 'lowest'] },
+        { categories: ['longest_route', 'furthest_flown', 'most_remaining'] },
+    ];
 
     const fr24Url          = (reg) => `https://www.flightradar24.com/data/aircraft/${reg.toLowerCase()}`;
     const planespottersUrl = (hex) => `https://www.planespotters.net/hex/${hex.toUpperCase()}`;
@@ -139,12 +154,24 @@
                     {/if}
                 </div>
             {/if}
-            {#if data.records?.length}
-                <div class="flex flex-wrap gap-2 mb-4">
-                    {#each data.records as rec}
-                        <div class="badge badge-primary badge-outline gap-1">
-                            {RECORD_LABELS[rec.category]?.label ?? rec.category} — {Math.round(rec.value)} {RECORD_LABELS[rec.category]?.unit ?? ''}
-                        </div>
+            {#if groupedBadges.length}
+                <div class="flex flex-wrap items-center gap-2 mb-4">
+                    {#each groupedBadges as group, i}
+                        {#if i > 0}
+                            <div class="w-px self-stretch bg-base-300" aria-hidden="true"></div>
+                        {/if}
+                        {#each group.records as rec}
+                            {#if rec.is_global_record}
+                                <div class="badge badge-accent text-white gap-1">
+                                    <IconTrophy size={12} />
+                                    {RECORD_LABELS[rec.category]?.label ?? rec.category} — {Math.round(rec.value)} {RECORD_LABELS[rec.category]?.unit ?? ''}
+                                </div>
+                            {:else}
+                                <div class="badge badge-primary badge-outline gap-1">
+                                    {RECORD_LABELS[rec.category]?.label ?? rec.category} — {Math.round(rec.value)} {RECORD_LABELS[rec.category]?.unit ?? ''}
+                                </div>
+                            {/if}
+                        {/each}
                     {/each}
                 </div>
             {/if}
