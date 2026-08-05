@@ -2,9 +2,30 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+// runningMaxActiveWindow is how long after its last reception a flight is
+// still treated as in progress. updateStatisticsTicker fires every 120s, so
+// this leaves room for a tick or two of slack without holding flights that
+// have genuinely ended open.
+const runningMaxActiveWindow = 5 * time.Minute
+
+// shouldRefreshRunningMax reports whether a fastest/highest pass should write
+// this aircraft.
+//
+// aircraft_data.gs and alt_baro only ever grow within a session (see
+// updateExistingAircrafts), so they already track the true session maximum.
+// Writing a flight once and marking it processed froze the record at whatever
+// the first tick after it appeared happened to catch. A flight that is still
+// being received is therefore rewritten every tick; once it goes quiet its
+// maximum has settled and the processed flag is left to do its job.
+func shouldRefreshRunningMax(processed bool, lastSeen, now time.Time) bool {
+	return !processed || now.Sub(lastSeen) <= runningMaxActiveWindow
+}
 
 func updateMeasurementStatistics(pg *postgres) {
 
@@ -47,9 +68,10 @@ func updateLowestAircraft(pg *postgres, aircrafts []Aircraft) {
 }
 
 func updateHighestAircraft(pg *postgres, aircrafts []Aircraft) {
+	now := time.Now()
 	var toProcess []Aircraft
 	for _, a := range aircrafts {
-		if !a.HighestProcessed {
+		if shouldRefreshRunningMax(a.HighestProcessed, a.LastSeen, now) {
 			toProcess = append(toProcess, a)
 		}
 	}
@@ -105,9 +127,10 @@ func updateSlowestAircraft(pg *postgres, aircrafts []Aircraft) {
 }
 
 func updateFastestAircraft(pg *postgres, aircrafts []Aircraft) {
+	now := time.Now()
 	var toProcess []Aircraft
 	for _, a := range aircrafts {
-		if !a.FastestProcessed {
+		if shouldRefreshRunningMax(a.FastestProcessed, a.LastSeen, now) {
 			toProcess = append(toProcess, a)
 		}
 	}
@@ -135,13 +158,20 @@ func updateFastestAircraft(pg *postgres, aircrafts []Aircraft) {
 
 func getAircraftsForMeasurementStatistics(pg *postgres) []Aircraft {
 
-	query := `SELECT id, hex, flight, r, t, first_seen, last_seen, alt_baro, alt_geom, gs, ias, tas, 
+	// Still-active flights are fetched even when every flag is set, so
+	// fastest/highest can keep following a session maximum that is still
+	// climbing (see shouldRefreshRunningMax). slowest/lowest filter on their
+	// own processed flag and so ignore the extra rows. The interval is derived
+	// from runningMaxActiveWindow so the two cannot drift apart.
+	query := fmt.Sprintf(`SELECT id, hex, flight, r, t, first_seen, last_seen, alt_baro, alt_geom, gs, ias, tas,
 				lowest_aircraft_processed, highest_aircraft_processed, fastest_aircraft_processed, slowest_aircraft_processed
 				FROM aircraft_data
 				WHERE lowest_aircraft_processed = false OR
 					highest_aircraft_processed = false OR
 					fastest_aircraft_processed = false OR
-					slowest_aircraft_processed = false`
+					slowest_aircraft_processed = false OR
+					last_seen > NOW() - INTERVAL '%d seconds'`,
+		int(runningMaxActiveWindow.Seconds()))
 
 	rows, err := pg.db.Query(context.Background(), query)
 	if err != nil {

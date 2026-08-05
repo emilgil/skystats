@@ -26,6 +26,50 @@ func TestImproved(t *testing.T) {
 	}
 }
 
+func TestIsNewRecordHolder_AnotherFlightTakingTheRecord(t *testing.T) {
+	takeoff := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	old := recordBest{Hex: "4cad94", FirstSeen: takeoff, MetricValue: 520}
+	new := recordBest{Hex: "48415f", FirstSeen: takeoff.Add(time.Hour), MetricValue: 560}
+
+	if !isNewRecordHolder(old, new, true) {
+		t.Error("a different flight beating the record is a new record holder")
+	}
+}
+
+func TestIsNewRecordHolder_SameFlightImprovingOnItself(t *testing.T) {
+	// fastest/highest now rewrite a flight every tick for as long as it is
+	// still airborne. Without this guard a single record-breaking flight would
+	// announce itself again every 120s for the rest of its climb.
+	takeoff := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	old := recordBest{Hex: "4cad94", FirstSeen: takeoff, MetricValue: 560}
+	new := recordBest{Hex: "4cad94", FirstSeen: takeoff, MetricValue: 575}
+
+	if isNewRecordHolder(old, new, true) {
+		t.Error("the same flight session improving on itself is not a new record holder")
+	}
+}
+
+func TestIsNewRecordHolder_SameAircraftOnALaterFlight(t *testing.T) {
+	// Same airframe, new session: that is a genuine new record and should
+	// announce, so the guard has to key on the session and not the hex alone.
+	old := recordBest{Hex: "4cad94", FirstSeen: time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC), MetricValue: 560}
+	new := recordBest{Hex: "4cad94", FirstSeen: time.Date(2026, 8, 6, 14, 0, 0, 0, time.UTC), MetricValue: 575}
+
+	if !isNewRecordHolder(old, new, true) {
+		t.Error("a later flight by the same airframe is a new record holder")
+	}
+}
+
+func TestIsNewRecordHolder_NotAnImprovement(t *testing.T) {
+	takeoff := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	old := recordBest{Hex: "4cad94", FirstSeen: takeoff, MetricValue: 560}
+	new := recordBest{Hex: "48415f", FirstSeen: takeoff.Add(time.Hour), MetricValue: 540}
+
+	if isNewRecordHolder(old, new, true) {
+		t.Error("a slower flight has not taken the record")
+	}
+}
+
 func TestBuildInterestingMessage(t *testing.T) {
 	dist := 12.4
 	a := InterestingAircraft{

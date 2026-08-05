@@ -27,40 +27,55 @@ type recordCandidate struct {
 
 // upsertFlightHistory merges one flight's known columns into flight_history.
 // metricCols maps column name -> value for the columns this pass knows about;
-// other columns keep their previous value via COALESCE. Column names come from
-// our own code (never user input), so the dynamic SQL is safe.
+// other columns keep their previous value via COALESCE.
 func upsertFlightHistory(pg *postgres, hex, flight, registration, aircraftType string, firstSeen, lastSeen time.Time, metricCols map[string]any) {
-	cols := []string{"hex", "flight", "registration", "type", "first_seen", "last_seen"}
-	args := []any{hex, flight, registration, aircraftType, firstSeen, lastSeen}
-
 	names := make([]string, 0, len(metricCols))
 	for k := range metricCols {
 		names = append(names, k)
 	}
 	sort.Strings(names) // deterministic column order
+
+	args := []any{hex, flight, registration, aircraftType, firstSeen, lastSeen}
 	for _, k := range names {
-		cols = append(cols, k)
 		args = append(args, metricCols[k])
 	}
 
-	placeholders := make([]string, len(args))
-	for i := range args {
+	if _, err := pg.db.Exec(context.Background(), flightHistoryUpsertSQL(names), args...); err != nil {
+		log.Error().Err(err).Msg("upsertFlightHistory() - failed")
+	}
+}
+
+// flightHistoryUpsertSQL builds the flight_history upsert for one pass.
+// metricNames are the metric columns this pass knows about and must already be
+// sorted, so the statement is stable for a given set of columns. Column names
+// come from our own code (never user input), so the dynamic SQL is safe.
+func flightHistoryUpsertSQL(metricNames []string) string {
+	cols := append([]string{"hex", "flight", "registration", "type", "first_seen", "last_seen"}, metricNames...)
+
+	placeholders := make([]string, len(cols))
+	for i := range cols {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 
-	updates := []string{"last_seen = EXCLUDED.last_seen"}
-	for _, k := range names {
+	// flight/registration/type are refreshed rather than left alone: whichever
+	// category job reaches a flight first would otherwise lock in whatever it
+	// knew at the time, and the motion job (120s) usually beats route matching
+	// (300s) to it, leaving the callsign permanently empty. NULLIF keeps a
+	// later pass that knows less from erasing a value we already have.
+	updates := []string{
+		"last_seen = EXCLUDED.last_seen",
+		"flight = COALESCE(NULLIF(EXCLUDED.flight, ''), flight_history.flight)",
+		"registration = COALESCE(NULLIF(EXCLUDED.registration, ''), flight_history.registration)",
+		"type = COALESCE(NULLIF(EXCLUDED.type, ''), flight_history.type)",
+	}
+	for _, k := range metricNames {
 		updates = append(updates, fmt.Sprintf("%s = COALESCE(EXCLUDED.%s, flight_history.%s)", k, k, k))
 	}
 
-	query := fmt.Sprintf(
+	return fmt.Sprintf(
 		`INSERT INTO flight_history (%s) VALUES (%s)
 		 ON CONFLICT (hex, first_seen) DO UPDATE SET %s`,
 		strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
-
-	if _, err := pg.db.Exec(context.Background(), query, args...); err != nil {
-		log.Error().Err(err).Msg("upsertFlightHistory() - failed")
-	}
 }
 
 // writeRecords inserts each candidate into every period bucket whose window
@@ -83,14 +98,7 @@ func writeRecords(pg *postgres, category string, candidates []recordCandidate) {
 	batch := &pgx.Batch{}
 	queued := 0
 
-	insert := `
-		INSERT INTO records (category, period_type, hex, flight, registration, type,
-			first_seen, last_seen, metric_name, metric_value, details)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		ON CONFLICT (category, period_type, hex, first_seen) DO UPDATE SET
-			metric_value = EXCLUDED.metric_value,
-			last_seen = EXCLUDED.last_seen,
-			details = EXCLUDED.details`
+	insert := recordsUpsertSQL(meta)
 
 	for _, c := range candidates {
 		detailsJSON, err := json.Marshal(c.Details)
@@ -122,11 +130,39 @@ func writeRecords(pg *postgres, category string, candidates []recordCandidate) {
 	// Notify when a candidate has beaten the previous all-time #1. A missing
 	// previous best (fresh install) is treated as a silent baseline.
 	if notifier != nil && hadOld {
-		if newBest, hasNew := allTimeBest(pg, meta); hasNew && improved(oldBest.MetricValue, newBest.MetricValue, meta.KeepMax) {
+		if newBest, hasNew := allTimeBest(pg, meta); hasNew && isNewRecordHolder(oldBest, newBest, meta.KeepMax) {
 			prev := oldBest.MetricValue
 			go notifier.NotifyRecord(category, newBest, prev, true)
 		}
 	}
+}
+
+// recordsUpsertSQL builds the records upsert for one category.
+//
+// A row is now rewritten on every tick for as long as the aircraft is still
+// airborne, so the conflict clause — not the last writer — decides the record.
+// It keeps whichever value is better for the category rather than trusting
+// that the incoming value can only have improved, and moves details in step
+// with it so a row never pairs one moment's speed with another moment's
+// supporting readings.
+func recordsUpsertSQL(meta recordCategory) string {
+	keep, better := "LEAST", "<="
+	if meta.KeepMax {
+		keep, better = "GREATEST", ">="
+	}
+
+	return fmt.Sprintf(`
+		INSERT INTO records (category, period_type, hex, flight, registration, type,
+			first_seen, last_seen, metric_name, metric_value, details)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (category, period_type, hex, first_seen) DO UPDATE SET
+			metric_value = %s(records.metric_value, EXCLUDED.metric_value),
+			details = CASE WHEN EXCLUDED.metric_value %s records.metric_value
+				THEN EXCLUDED.details ELSE records.details END,
+			last_seen = EXCLUDED.last_seen,
+			flight = COALESCE(NULLIF(EXCLUDED.flight, ''), records.flight),
+			registration = COALESCE(NULLIF(EXCLUDED.registration, ''), records.registration),
+			type = COALESCE(NULLIF(EXCLUDED.type, ''), records.type)`, keep, better)
 }
 
 // allTimeBest returns the current #1 all_time record for a category, and false

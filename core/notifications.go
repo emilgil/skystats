@@ -107,6 +107,21 @@ func improved(oldVal, newVal float64, keepMax bool) bool {
 	return newVal < oldVal
 }
 
+// isNewRecordHolder reports whether the all-time #1 moving from old to new is
+// worth announcing.
+//
+// fastest/highest rewrite a flight on every tick for as long as it is still
+// airborne (see shouldRefreshRunningMax), so a flight that takes the record
+// and then keeps climbing would otherwise announce itself again on every tick.
+// A flight session is only news the first time it takes the top spot; the same
+// airframe on a later flight is a genuine new record and still announces.
+func isNewRecordHolder(old, new recordBest, keepMax bool) bool {
+	if old.Hex == new.Hex && old.FirstSeen.Equal(new.FirstSeen) {
+		return false
+	}
+	return improved(old.MetricValue, new.MetricValue, keepMax)
+}
+
 func (n *NotificationService) loadConfig() NotificationConfig {
 	return NotificationConfig{
 		Enabled:   getBoolSetting(n.pg, "notifications_enabled", false),
