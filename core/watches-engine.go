@@ -278,6 +278,28 @@ func refreshMatchTimestamps(pg *postgres, keys map[watchKey]bool, now time.Time)
 // tick.
 var firstSeen = newFirstSeenTracker()
 
+// pendingWatchNotifications holds started matches whose notification is waiting
+// for the callsign and route to arrive. Like evaluateWatches itself it is only
+// ever touched from the single ingest-tick goroutine, so it needs no lock.
+var pendingWatchNotifications = newPendingWatchQueue()
+
+// releasableEntries drops pending notifications whose watch disappeared while
+// they waited. A deleted or disabled watch is no longer in watchByID, and its
+// history row would fail the watch_id foreign key anyway — so the entry is
+// discarded before it can spend any of the per-tick send cap.
+func releasableEntries(released []pendingWatchNotification, watchByID map[int]Watch) []pendingWatchNotification {
+
+	kept := make([]pendingWatchNotification, 0, len(released))
+	for _, e := range released {
+		if _, ok := watchByID[e.Key.WatchID]; !ok {
+			log.Debug().Msgf("Dropping pending notification for watch %d / %s, which no longer exists", e.Key.WatchID, e.Key.Hex)
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
 // evaluateWatches matches the current readsb snapshot against every enabled
 // watch and fires one notification per match that starts. Called from the 2s
 // ingest tick with the snapshot and enrichment it has already fetched.
@@ -371,23 +393,57 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 	// The notification config is read once per tick and handed to every send.
 	// Loading it inside each NotifyWatch would be 15 QueryRow calls per started
 	// match — 2400 of them on a pool of four connections when a broad watch
-	// starts matching every aircraft in range at once.
+	// starts matching every aircraft in range at once. It is also needed when
+	// nothing started but the queue still holds entries that may release now.
 	var cfg NotificationConfig
-	if notifier != nil && len(confirmed) > 0 {
+	if notifier != nil && (len(confirmed) > 0 || pendingWatchNotifications.len() > 0) {
 		cfg = notifier.loadConfig()
 	}
 
-	sendable, capWarning := planWatchSends(confirmed, names, watchNotifyCap)
-	if capWarning != "" {
-		log.Warn().Msg(capWarning)
-	}
-
+	// A started match is queued, not notified. Its watch_active_matches row is
+	// already written, so diffMatches can never report it again — from here the
+	// queue is the only thing that will ever notify for it. A full queue fails
+	// open: the entry is released on the spot rather than lost.
+	delay := time.Duration(cfg.DelaySeconds) * time.Second
+	var released []pendingWatchNotification
 	for _, key := range confirmed {
 		persisted[key] = true
 		log.Info().Msgf("Watch %q matched %s", names[key.WatchID], key.Hex)
 
-		if notifier != nil {
-			go notifier.NotifyWatch(cfg, watchByID[key.WatchID], subjects[key.Hex], sendable[key], false)
+		if !pendingWatchNotifications.enqueue(key, subjects[key.Hex], now, delay) {
+			log.Warn().Msgf("Pending notification queue is full, sending for %s without waiting", key.Hex)
+			released = append(released, pendingWatchNotification{
+				Key:      key,
+				Subject:  subjects[key.Hex],
+				QueuedAt: now,
+			})
+		}
+	}
+
+	released = append(released, pendingWatchNotifications.refresh(subjects, now)...)
+
+	if notifier != nil && len(released) > 0 {
+		sendableEntries := releasableEntries(released, watchByID)
+
+		// The cap now bounds what is actually pushed on a tick rather than what
+		// matched on it. A broad watch that starts matching 200 aircraft queues
+		// all 200 and is trimmed here when they release — the same outcome as
+		// before, moved to the moment it describes.
+		keys := make([]watchKey, 0, len(sendableEntries))
+		for _, e := range sendableEntries {
+			keys = append(keys, e.Key)
+		}
+		sendable, capWarning := planWatchSends(keys, names, watchNotifyCap)
+		if capWarning != "" {
+			log.Warn().Msg(capWarning)
+		}
+
+		for _, e := range sendableEntries {
+			log.Info().Msgf("Watch %q releasing notification for %s after %.1fs (callsign=%q route=%t gone=%t)",
+				names[e.Key.WatchID], e.Key.Hex, now.Sub(e.QueuedAt).Seconds(),
+				strings.TrimSpace(e.Subject.Callsign), hasRoute(e.Subject), e.LeftCoverage)
+
+			go notifier.NotifyWatch(cfg, watchByID[e.Key.WatchID], e.Subject, sendable[e.Key], e.LeftCoverage)
 		}
 	}
 

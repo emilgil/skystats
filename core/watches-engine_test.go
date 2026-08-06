@@ -282,3 +282,40 @@ func TestPlanWatchSendsHandlesNoStartedMatches(t *testing.T) {
 		t.Errorf("got %d sends and warning %q, want neither", len(send), warning)
 	}
 }
+
+func TestReleasableEntriesDropsNotificationsForVanishedWatches(t *testing.T) {
+	watchByID := map[int]Watch{
+		1: {ID: 1, Name: "Above 40,000 ft"},
+	}
+	released := []pendingWatchNotification{
+		{Key: watchKey{WatchID: 1, Hex: "78026e"}},
+		{Key: watchKey{WatchID: 9, Hex: "4ca7b5"}}, // deleted or disabled while waiting
+		{Key: watchKey{WatchID: 1, Hex: "45d970"}},
+	}
+
+	got := releasableEntries(released, watchByID)
+
+	if len(got) != 2 {
+		t.Fatalf("kept %d entries, want 2", len(got))
+	}
+	for _, e := range got {
+		if e.Key.WatchID != 1 {
+			t.Errorf("kept an entry for watch %d, which no longer exists", e.Key.WatchID)
+		}
+	}
+	if got[0].Key.Hex != "78026e" || got[1].Key.Hex != "45d970" {
+		t.Errorf("order should be preserved, got %s then %s", got[0].Key.Hex, got[1].Key.Hex)
+	}
+}
+
+func TestReleasableEntriesKeepsEverythingWhenEveryWatchStillExists(t *testing.T) {
+	watchByID := map[int]Watch{1: {ID: 1, Name: "A"}, 2: {ID: 2, Name: "B"}}
+	released := []pendingWatchNotification{
+		{Key: watchKey{WatchID: 1, Hex: "aaaa"}},
+		{Key: watchKey{WatchID: 2, Hex: "bbbb"}},
+	}
+
+	if got := releasableEntries(released, watchByID); len(got) != 2 {
+		t.Fatalf("kept %d entries, want 2", len(got))
+	}
+}
