@@ -319,6 +319,11 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 	firstSeenNow := firstSeen.update(hexes, brandNew, now, watchMatchGrace)
 
 	if len(watches) == 0 {
+		// Nothing left to notify for. Waiting entries all belong to watches that
+		// have since been deleted or disabled, and this path returns before the
+		// queue is drained, so without this they would sit there until a watch
+		// reappeared and then fire for matches long past.
+		pendingWatchNotifications.reset()
 		return
 	}
 

@@ -52,6 +52,19 @@ func newPendingWatchQueue() *pendingWatchQueue {
 
 func (q *pendingWatchQueue) len() int { return len(q.entries) }
 
+// reset discards everything waiting. Its one caller is the no-enabled-watches
+// path: with every watch deleted or disabled, each waiting entry belongs to a
+// watch that no longer exists, so all of them would be dropped at release
+// anyway. Clearing them here is the same decision made earlier, and it is what
+// keeps a watch that is disabled and later re-enabled from firing a burst of
+// notifications for matches that happened hours ago.
+func (q *pendingWatchQueue) reset() {
+	if len(q.entries) == 0 {
+		return
+	}
+	q.entries = map[watchKey]*pendingWatchNotification{}
+}
+
 // enqueue adds one started match, reporting false when the queue is full — the
 // caller must then send straight away rather than drop the match.
 //

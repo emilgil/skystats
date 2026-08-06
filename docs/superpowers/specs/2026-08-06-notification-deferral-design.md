@@ -195,6 +195,12 @@ tick, so the route is normally already stored.
   queue must not treat "no enrichment" as a reason to keep waiting past the
   deadline.
 - **Watch removed mid-wait.** Entry dropped at release, logged at debug.
+- **Every watch removed or disabled mid-wait.** `evaluateWatches` returns early
+  when no watch is enabled, before the queue is drained, so waiting entries
+  would otherwise be stranded — and fire for hours-old matches if a watch were
+  later re-enabled. That path clears the queue instead. Every waiting entry
+  belongs to a watch that no longer exists, so all of them would have been
+  dropped at release anyway.
 - **Queue overflow.** Above 500 entries, release immediately.
 - **Restart mid-wait.** Hit lost, as described above. Accepted.
 

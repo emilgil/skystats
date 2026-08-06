@@ -243,3 +243,24 @@ func TestPendingWatchQueueReleasesInAStableOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingWatchQueueResetDiscardsEverythingWaiting(t *testing.T) {
+	q := newPendingWatchQueue()
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+
+	q.enqueue(watchKey{WatchID: 1, Hex: "78026e"}, pendingBare, now, 30*time.Second)
+	q.enqueue(watchKey{WatchID: 2, Hex: "45d970"}, pendingCallsign, now, 30*time.Second)
+
+	q.reset()
+
+	if q.len() != 0 {
+		t.Fatalf("queue length after reset = %d, want 0", q.len())
+	}
+	// The queue must still be usable afterwards: watches can be re-enabled.
+	if !q.enqueue(watchKey{WatchID: 3, Hex: "4ca7b5"}, pendingBare, now, 30*time.Second) {
+		t.Error("enqueue refused an entry into a queue that had just been reset")
+	}
+	if released := q.refresh(map[string]watchSubject{}, now.Add(30*time.Second)); len(released) != 1 {
+		t.Errorf("released %d entries after reset, want 1", len(released))
+	}
+}
