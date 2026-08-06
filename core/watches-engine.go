@@ -387,7 +387,7 @@ func evaluateWatches(pg *postgres, aircraft []Aircraft, enrichment map[string]ai
 		log.Info().Msgf("Watch %q matched %s", names[key.WatchID], key.Hex)
 
 		if notifier != nil {
-			go notifier.NotifyWatch(cfg, watchByID[key.WatchID], subjects[key.Hex], sendable[key])
+			go notifier.NotifyWatch(cfg, watchByID[key.WatchID], subjects[key.Hex], sendable[key], false)
 		}
 	}
 

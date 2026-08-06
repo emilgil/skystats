@@ -63,6 +63,7 @@ type NotificationConfig struct {
 	Groups          map[string]bool // "Mil","Gov","Pol","Civ"
 	Records         map[string]bool // 7 record categories
 	CooldownMinutes int
+	DelaySeconds    int // how long a watch notification waits for its enrichment
 }
 
 // recordBest is the current #1 all-time holder for a record category.
@@ -143,6 +144,7 @@ func (n *NotificationService) loadConfig() NotificationConfig {
 			"most_remaining": getBoolSetting(n.pg, "notify_record_most_remaining", true),
 		},
 		CooldownMinutes: getIntSetting(n.pg, "notification_cooldown_minutes", 60),
+		DelaySeconds:    getIntSetting(n.pg, "notification_delay_seconds", 30),
 	}
 }
 
@@ -250,7 +252,11 @@ func buildInterestingMessage(a InterestingAircraft, distanceKm *float64, routeFr
 }
 
 // buildRecordMessage returns (title, body) for a new all-time record.
-func buildRecordMessage(category string, best recordBest, prevValue float64, hasPrev bool) (string, string) {
+//
+// routeFrom/routeTo are the record flight's route, or empty when the callsign
+// has none stored. Both ends are required: half a route tells the reader less
+// than no route at all.
+func buildRecordMessage(category string, best recordBest, prevValue float64, hasPrev bool, routeFrom, routeTo string) (string, string) {
 	d := recordDisplay[category]
 	title := fmt.Sprintf("🏆 New all-time record: %s", d.Name)
 
@@ -270,6 +276,9 @@ func buildRecordMessage(category string, best recordBest, prevValue float64, has
 	}
 	if f := strings.TrimSpace(best.Flight); f != "" {
 		fmt.Fprintf(&b, "Callsign: %s\n", f)
+	}
+	if routeFrom != "" && routeTo != "" {
+		fmt.Fprintf(&b, "Route: %s → %s\n", routeFrom, routeTo)
 	}
 	return title, strings.TrimRight(b.String(), "\n")
 }
@@ -380,7 +389,8 @@ func (n *NotificationService) NotifyRecord(category string, best recordBest, pre
 	if n.recordAlreadyNotified(category, best.Hex, best.FirstSeen) {
 		return
 	}
-	title, body := buildRecordMessage(category, best, prevValue, hasPrev)
+	from, to := n.lookupRoute(strings.TrimSpace(best.Flight))
+	title, body := buildRecordMessage(category, best, prevValue, hasPrev, from, to)
 	httpStatus, sendErr := n.send(cfg.APIURL, cfg.ConfigKey, apprisePayload{Body: body, Title: title})
 	status, errMsg := "sent", ""
 	if sendErr != nil {
@@ -414,7 +424,7 @@ func (n *NotificationService) SendTest(apiURL, key string) error {
 
 // buildWatchMessage returns (title, body) for an aircraft that has started
 // matching a watch. Fields with no data are omitted rather than shown empty.
-func buildWatchMessage(watchName string, s watchSubject) (string, string) {
+func buildWatchMessage(watchName string, s watchSubject, leftCoverage bool) (string, string) {
 
 	name := firstNonEmpty(s.Registration, strings.TrimSpace(s.Callsign), s.Hex)
 	title := fmt.Sprintf("👁 Watch \"%s\": %s", watchName, name)
@@ -453,6 +463,12 @@ func buildWatchMessage(watchName string, s watchSubject) (string, string) {
 	if s.FirstSeenEver {
 		fmt.Fprintf(&b, "First time ever seen\n")
 	}
+	// The aircraft was already out of the snapshot when this notification was
+	// released, so it is a report rather than an alert. Saying so beats letting
+	// the reader run to the window for nothing.
+	if leftCoverage {
+		fmt.Fprintf(&b, "Aircraft has left coverage\n")
+	}
 
 	return title, strings.TrimRight(b.String(), "\n")
 }
@@ -463,15 +479,16 @@ func buildWatchMessage(watchName string, s watchSubject) (string, string) {
 //
 // cfg is loaded once per tick by evaluateWatches and passed in rather than read
 // here, and allowSend is false when the per-tick cap has already been spent —
-// the row is still written, only the push is dropped.
-func (n *NotificationService) NotifyWatch(cfg NotificationConfig, w Watch, s watchSubject, allowSend bool) {
+// the row is still written, only the push is dropped. leftCoverage marks a
+// notification released after the aircraft had already gone.
+func (n *NotificationService) NotifyWatch(cfg NotificationConfig, w Watch, s watchSubject, allowSend bool, leftCoverage bool) {
 
 	if n.watchSends != nil {
 		n.watchSends <- struct{}{}
 		defer func() { <-n.watchSends }()
 	}
 
-	title, body := buildWatchMessage(w.Name, s)
+	title, body := buildWatchMessage(w.Name, s, leftCoverage)
 
 	snapshot, err := json.Marshal(map[string]any{
 		"callsign":          s.Callsign,

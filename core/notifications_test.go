@@ -121,7 +121,7 @@ func TestBuildInterestingMessageOmitsMissing(t *testing.T) {
 
 func TestBuildRecordMessage(t *testing.T) {
 	best := recordBest{Registration: "N12345", Type: "B738", Flight: "SAS1", MetricValue: 45000}
-	title, body := buildRecordMessage("highest", best, 44200, true)
+	title, body := buildRecordMessage("highest", best, 44200, true, "", "")
 	if title != "🏆 New all-time record: Highest" {
 		t.Errorf("title = %q", title)
 	}
@@ -129,6 +129,39 @@ func TestBuildRecordMessage(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q in:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "Route") {
+		t.Errorf("body should omit the route when there is none:\n%s", body)
+	}
+}
+
+func TestBuildRecordMessageIncludesTheRoute(t *testing.T) {
+	best := recordBest{Registration: "B-2091", Type: "B77L", Flight: "CAO1008", MetricValue: 578}
+	_, body := buildRecordMessage("fastest", best, 574, true, "PVG", "PIK")
+	if !strings.Contains(body, "Route: PVG → PIK") {
+		t.Errorf("body missing the route:\n%s", body)
+	}
+}
+
+func TestBuildRecordMessageOmitsAHalfRoute(t *testing.T) {
+	best := recordBest{Registration: "B-2091", Flight: "CAO1008", MetricValue: 578}
+	_, body := buildRecordMessage("fastest", best, 574, true, "PVG", "")
+	if strings.Contains(body, "Route") {
+		t.Errorf("a route with only one end should not be printed:\n%s", body)
+	}
+}
+
+func TestBuildWatchMessageMarksANotificationSentAfterTheAircraftLeft(t *testing.T) {
+	_, body := buildWatchMessage("Above 40,000 ft", watchSubject{Hex: "78026e", Callsign: "CAO1160"}, true)
+	if !strings.Contains(body, "Aircraft has left coverage") {
+		t.Errorf("body should say the aircraft is gone:\n%s", body)
+	}
+}
+
+func TestBuildWatchMessageOmitsTheMarkerWhileTheAircraftIsStillInRange(t *testing.T) {
+	_, body := buildWatchMessage("Above 40,000 ft", watchSubject{Hex: "78026e", Callsign: "CAO1160"}, false)
+	if strings.Contains(body, "left coverage") {
+		t.Errorf("body should not claim the aircraft is gone:\n%s", body)
 	}
 }
 
@@ -185,7 +218,7 @@ func TestBuildWatchMessageUsesRegistrationInTheTitle(t *testing.T) {
 		DistanceKm: 42.5, HasPosition: true, Squawk: "2000",
 	}
 
-	title, body := buildWatchMessage("Boeing close by", s)
+	title, body := buildWatchMessage("Boeing close by", s, false)
 
 	if !strings.Contains(title, "Boeing close by") {
 		t.Errorf("title should name the watch, got %q", title)
@@ -201,7 +234,7 @@ func TestBuildWatchMessageUsesRegistrationInTheTitle(t *testing.T) {
 }
 
 func TestBuildWatchMessageFallsBackToHexAndOmitsMissingData(t *testing.T) {
-	title, body := buildWatchMessage("Anything", watchSubject{Hex: "4ca7b5"})
+	title, body := buildWatchMessage("Anything", watchSubject{Hex: "4ca7b5"}, false)
 
 	if !strings.Contains(title, "4ca7b5") {
 		t.Errorf("title should fall back to the hex, got %q", title)
@@ -214,7 +247,7 @@ func TestBuildWatchMessageFallsBackToHexAndOmitsMissingData(t *testing.T) {
 }
 
 func TestBuildWatchMessageMarksFirstEverSighting(t *testing.T) {
-	_, body := buildWatchMessage("New aircraft", watchSubject{Hex: "4ca7b5", FirstSeenEver: true})
+	_, body := buildWatchMessage("New aircraft", watchSubject{Hex: "4ca7b5", FirstSeenEver: true}, false)
 
 	if !strings.Contains(body, "First time") {
 		t.Errorf("body should flag a first-ever sighting:\n%s", body)
