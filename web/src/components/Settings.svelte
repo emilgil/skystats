@@ -42,6 +42,7 @@
     let notifyRecordFastest = true, notifyRecordSlowest = true, notifyRecordHighest = true, notifyRecordLowest = true;
     let notifyRecordFurthestFlown = true, notifyRecordLongestRoute = true, notifyRecordMostRemaining = true;
     let notificationCooldownMinutes = 60;
+    let notificationDelaySeconds = 30;
     let notificationsChanged = false;
     let isTestingNotification = false;
     let testResult = null;
@@ -148,6 +149,7 @@
         if ($settings.notify_record_longest_route) notifyRecordLongestRoute = $settings.notify_record_longest_route.setting_value === 'true';
         if ($settings.notify_record_most_remaining) notifyRecordMostRemaining = $settings.notify_record_most_remaining.setting_value === 'true';
         if ($settings.notification_cooldown_minutes) notificationCooldownMinutes = parseInt($settings.notification_cooldown_minutes.setting_value);
+        if ($settings.notification_delay_seconds) notificationDelaySeconds = parseInt($settings.notification_delay_seconds.setting_value);
     }
 
     function handleSettingChange() {
@@ -194,6 +196,7 @@
             notify_group_pol: notifyGroupPol.toString(),
             notify_group_civ: notifyGroupCiv.toString(),
             notification_cooldown_minutes: (Number.isFinite(notificationCooldownMinutes) && notificationCooldownMinutes >= 1 ? Math.floor(notificationCooldownMinutes) : 60).toString(),
+            notification_delay_seconds: (Number.isFinite(notificationDelaySeconds) && notificationDelaySeconds >= 0 ? Math.floor(notificationDelaySeconds) : 30).toString(),
             notify_record_fastest: notifyRecordFastest.toString(),
             notify_record_slowest: notifyRecordSlowest.toString(),
             notify_record_highest: notifyRecordHighest.toString(),
@@ -434,6 +437,12 @@
                                 <p class="text-xl font-extralight tracking-wider mb-2">Cooldown</p>
                                 <p class="text-m text-base-content/70 mb-2">Minutes to wait before notifying about the same interesting aircraft again</p>
                                 <input type="number" bind:value={notificationCooldownMinutes} on:input={handleNotificationChange} min="1" step="1" class="input w-20" />
+                            </div>
+
+                            <div>
+                                <p class="text-xl font-extralight tracking-wider mb-2">Delay</p>
+                                <p class="text-m text-base-content/70 mb-2">Seconds to hold a notification while the aircraft's callsign and route arrive. 0 sends immediately.</p>
+                                <input type="number" bind:value={notificationDelaySeconds} on:input={handleNotificationChange} min="0" step="1" class="input w-20" />
                             </div>
 
                             <div class="flex items-center gap-3">

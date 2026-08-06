@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/rs/zerolog/log"
@@ -10,7 +11,14 @@ import (
 
 func updateInterestingSeen(pg *postgres) {
 
-	aircrafts := unprocessedInteresting(pg)
+	// The same setting that defers watch notifications. A negative value would
+	// pull first_seen into the future and select nothing, so it is clamped.
+	delaySeconds := getIntSetting(pg, "notification_delay_seconds", 30)
+	if delaySeconds < 0 {
+		delaySeconds = 0
+	}
+
+	aircrafts := unprocessedInteresting(pg, time.Duration(delaySeconds)*time.Second)
 
 	if len(aircrafts) == 0 {
 		return
@@ -208,7 +216,11 @@ func updateInterestingSeen(pg *postgres) {
 
 }
 
-func unprocessedInteresting(pg *postgres) []Aircraft {
+// unprocessedInteresting returns sightings old enough to have transmitted their
+// identity. ADS-B broadcasts a callsign far less often than a position, so an
+// aircraft picked up moments after first contact would be notified as a bare
+// hex; leaving it for the next tick costs 120 seconds and buys an identity.
+func unprocessedInteresting(pg *postgres, minAge time.Duration) []Aircraft {
 
 	query := `
 		SELECT id,
@@ -232,10 +244,11 @@ func unprocessedInteresting(pg *postgres) []Aircraft {
 		FROM aircraft_data
 		WHERE
 			hex != '' AND
-			interesting_processed = false
+			interesting_processed = false AND
+			first_seen < NOW() - make_interval(secs => $1)
 		ORDER BY first_seen ASC`
 
-	rows, err := pg.db.Query(context.Background(), query)
+	rows, err := pg.db.Query(context.Background(), query, minAge.Seconds())
 
 	if err != nil {
 		log.Error().Err(err).Msg("unprocessedInteresting() - Error querying db")
