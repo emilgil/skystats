@@ -84,6 +84,20 @@ func getDistance(aircraft []float64) *float64 {
 	return &distance
 }
 
+func getBearing(aircraft []float64) float64 {
+	loc := []float64{getLon(), getLat()}
+	return normalizeBearing(getRuler().Bearing(loc, aircraft))
+}
+
+// normalizeBearing converts cheap-ruler's Bearing() output, which is in
+// (-180, 180], to a compass bearing in [0, 360).
+func normalizeBearing(bearing float64) float64 {
+	if bearing < 0 {
+		return bearing + 360
+	}
+	return bearing
+}
+
 func (pg *postgres) updateDatabase(nowEpoch float64, aircrafts []Aircraft) {
 
 	existingAircrafts := getAircraftsRecentlySeen(pg, nowEpoch, aircrafts)
@@ -132,7 +146,13 @@ func getAircraftsRecentlySeen(pg *postgres, nowEpoch float64, aircrafts []Aircra
 			alt_geom,
 			gs,
 			ias,
-			tas
+			tas,
+			min_distance_receiver,
+			min_distance_receiver_altitude,
+			min_distance_receiver_bearing,
+			max_distance_receiver,
+			max_distance_receiver_altitude,
+			max_distance_receiver_bearing
 		FROM aircraft_data
 		WHERE hex = ANY($1::text[])
 			AND last_seen_epoch > $2
@@ -159,7 +179,13 @@ func getAircraftsRecentlySeen(pg *postgres, nowEpoch float64, aircrafts []Aircra
 			&a.AltGeom,
 			&a.Gs,
 			&a.Ias,
-			&a.Tas)
+			&a.Tas,
+			&a.MinDistanceReceiver,
+			&a.MinDistanceReceiverAltitude,
+			&a.MinDistanceReceiverBearing,
+			&a.MaxDistanceReceiver,
+			&a.MaxDistanceReceiverAltitude,
+			&a.MaxDistanceReceiverBearing)
 
 		if err != nil {
 			log.Error().Err(err).Msg("getAircraftsRecentlySeen() - error scanning rows")
@@ -190,6 +216,7 @@ func insertNewAircrafts(pg *postgres, nowEpoch float64, existingAircrafts map[st
 		_, exists := existingAircrafts[aircraft.Hex]
 		if !exists {
 			lastSeenDistance := getDistance([]float64{aircraft.Lon, aircraft.Lat})
+			bearing := getBearing([]float64{aircraft.Lon, aircraft.Lat})
 			aircraftsToInsert = append(aircraftsToInsert, aircraft)
 			insertStatement := `
 				INSERT INTO aircraft_data (
@@ -235,11 +262,18 @@ func insertNewAircrafts(pg *postgres, nowEpoch float64, existingAircrafts map[st
 					messages,
 					seen,
 					rssi,
-					db_flags
+					db_flags,
+					min_distance_receiver,
+					min_distance_receiver_altitude,
+					min_distance_receiver_bearing,
+					max_distance_receiver,
+					max_distance_receiver_altitude,
+					max_distance_receiver_bearing
 				) VALUES (
 					$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
 					$16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28,
-					$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43
+					$29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41, $42, $43,
+					$44, $45, $46, $47, $48, $49
 				)`
 
 			batch.Queue(insertStatement,
@@ -285,7 +319,13 @@ func insertNewAircrafts(pg *postgres, nowEpoch float64, existingAircrafts map[st
 				aircraft.Messages,
 				aircraft.Seen,
 				aircraft.Rssi,
-				aircraft.DbFlags)
+				aircraft.DbFlags,
+				*lastSeenDistance,
+				aircraft.AltBaro,
+				bearing,
+				*lastSeenDistance,
+				aircraft.AltBaro,
+				bearing)
 		}
 	}
 
@@ -326,6 +366,22 @@ func updateExistingAircrafts(pg *postgres, nowEpoch float64, aircrafts []Aircraf
 		existingAircraft.LastSeenLon = sql.NullFloat64{Float64: aircraft.Lon, Valid: true}
 		lastSeenDistance := getDistance([]float64{aircraft.Lon, aircraft.Lat})
 		existingAircraft.LastSeenDistance = sql.NullFloat64{Float64: *lastSeenDistance, Valid: true}
+
+		// Update running min/max distance-to-receiver for Nearest/Furthest —
+		// tracked across the whole flight, not snapshotted once. See
+		// updateReceiverDistanceStatistics (stats-receiver-distance.go) for
+		// where the final value gets written out.
+		bearing := getBearing([]float64{aircraft.Lon, aircraft.Lat})
+		if !existingAircraft.MinDistanceReceiver.Valid || *lastSeenDistance < existingAircraft.MinDistanceReceiver.Float64 {
+			existingAircraft.MinDistanceReceiver = sql.NullFloat64{Float64: *lastSeenDistance, Valid: true}
+			existingAircraft.MinDistanceReceiverAltitude = aircraft.AltBaro
+			existingAircraft.MinDistanceReceiverBearing = bearing
+		}
+		if !existingAircraft.MaxDistanceReceiver.Valid || *lastSeenDistance > existingAircraft.MaxDistanceReceiver.Float64 {
+			existingAircraft.MaxDistanceReceiver = sql.NullFloat64{Float64: *lastSeenDistance, Valid: true}
+			existingAircraft.MaxDistanceReceiverAltitude = aircraft.AltBaro
+			existingAircraft.MaxDistanceReceiverBearing = bearing
+		}
 
 		// Update destination distance
 		if aircraft.Flight != "" {
@@ -376,8 +432,14 @@ func updateExistingAircrafts(pg *postgres, nowEpoch float64, aircrafts []Aircraf
 								gs = $10,
 								ias = $11,
 								tas = $12,
-								flight = $13
-							WHERE id = $14`
+								flight = $13,
+								min_distance_receiver = $14,
+								min_distance_receiver_altitude = $15,
+								min_distance_receiver_bearing = $16,
+								max_distance_receiver = $17,
+								max_distance_receiver_altitude = $18,
+								max_distance_receiver_bearing = $19
+							WHERE id = $20`
 
 		batch.Queue(
 			updateStatement,
@@ -394,6 +456,12 @@ func updateExistingAircrafts(pg *postgres, nowEpoch float64, aircrafts []Aircraf
 			existingAircraft.Ias,
 			existingAircraft.Tas,
 			existingAircraft.Flight,
+			existingAircraft.MinDistanceReceiver,
+			existingAircraft.MinDistanceReceiverAltitude,
+			existingAircraft.MinDistanceReceiverBearing,
+			existingAircraft.MaxDistanceReceiver,
+			existingAircraft.MaxDistanceReceiverAltitude,
+			existingAircraft.MaxDistanceReceiverBearing,
 			existingAircraft.Id,
 		)
 	}

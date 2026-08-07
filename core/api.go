@@ -102,6 +102,8 @@ func (s *APIServer) Start() {
 			stats.GET("/motion/furthest-flown", func(c *gin.Context) { s.getRecords(c, "furthest_flown") })
 			stats.GET("/motion/most-remaining", func(c *gin.Context) { s.getRecords(c, "most_remaining") })
 			stats.GET("/motion/longest-route", func(c *gin.Context) { s.getRecords(c, "longest_route") })
+			stats.GET("/motion/nearest", func(c *gin.Context) { s.getRecords(c, "nearest") })
+			stats.GET("/motion/furthest", func(c *gin.Context) { s.getRecords(c, "furthest_range") })
 			stats.GET("/motion/recent", s.getRecentObservations)
 
 			stats.GET("/interesting/metrics", s.getInterestingMetrics)

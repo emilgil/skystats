@@ -157,6 +157,7 @@ func main() {
 		case <-updateStatisticsTicker.C:
 			log.Debug().Msg("Update Statistics")
 			updateMeasurementStatistics(pg)
+			updateReceiverDistanceStatistics(pg)
 		case <-updateRegistrationsTicker.C:
 			log.Debug().Msg("Update Aircraft Registration")
 			updateRegistrations(pg)

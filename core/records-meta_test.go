@@ -8,10 +8,12 @@ import (
 
 func TestBestFirstSQL(t *testing.T) {
 	cases := map[string]string{
-		"fastest": "DESC",
-		"slowest": "ASC",
-		"highest": "DESC",
-		"lowest":  "ASC",
+		"fastest":        "DESC",
+		"slowest":        "ASC",
+		"highest":        "DESC",
+		"lowest":         "ASC",
+		"nearest":        "ASC",
+		"furthest_range": "DESC",
 	}
 	for cat, want := range cases {
 		if got := recordCategories[cat].bestFirstSQL(); got != want {

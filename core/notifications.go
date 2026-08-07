@@ -99,6 +99,8 @@ var recordDisplay = map[string]struct{ Name, Metric, Unit string }{
 	"furthest_flown": {"Furthest flown", "Distance flown", "km"},
 	"longest_route":  {"Longest route", "Route distance", "km"},
 	"most_remaining": {"Most remaining", "Distance remaining", "km"},
+	"nearest":        {"Nearest", "Distance", "km"},
+	"furthest_range": {"Furthest", "Distance", "km"},
 }
 
 func improved(oldVal, newVal float64, keepMax bool) bool {
@@ -142,6 +144,8 @@ func (n *NotificationService) loadConfig() NotificationConfig {
 			"furthest_flown": getBoolSetting(n.pg, "notify_record_furthest_flown", true),
 			"longest_route":  getBoolSetting(n.pg, "notify_record_longest_route", true),
 			"most_remaining": getBoolSetting(n.pg, "notify_record_most_remaining", true),
+			"nearest":        getBoolSetting(n.pg, "notify_record_nearest", true),
+			"furthest_range": getBoolSetting(n.pg, "notify_record_furthest_range", true),
 		},
 		CooldownMinutes: getIntSetting(n.pg, "notification_cooldown_minutes", 60),
 		DelaySeconds:    getIntSetting(n.pg, "notification_delay_seconds", 30),
