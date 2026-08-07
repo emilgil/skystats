@@ -22,6 +22,8 @@ var recordCategories = map[string]recordCategory{
 	"furthest_flown": {Name: "furthest_flown", MetricName: "distance_flown", KeepMax: true},
 	"longest_route":  {Name: "longest_route", MetricName: "route_distance", KeepMax: true},
 	"most_remaining": {Name: "most_remaining", MetricName: "distance_remaining", KeepMax: true},
+	"nearest":        {Name: "nearest", MetricName: "min_distance_receiver", KeepMax: false},
+	"furthest_range": {Name: "furthest_range", MetricName: "max_distance_receiver", KeepMax: true},
 }
 
 // validateRecordCategories reports whether every key in the list is a known
