@@ -66,6 +66,22 @@ type Aircraft struct {
 	FastestProcessed    bool
 	SlowestProcessed    bool
 
+	// Running min/max distance-to-receiver for Nearest/Furthest, updated on
+	// every 2s position tick (see updateExistingAircrafts in aircraft.go),
+	// finalized by updateReceiverDistanceStatistics once the flight goes
+	// stale. Distance uses sql.NullFloat64 so "never observed this session"
+	// is distinguishable from "0 km away"; altitude/bearing are always
+	// written in the same branch as the distance so they don't need
+	// independent nullability.
+	MinDistanceReceiver         sql.NullFloat64
+	MinDistanceReceiverAltitude int
+	MinDistanceReceiverBearing  float64
+	MaxDistanceReceiver         sql.NullFloat64
+	MaxDistanceReceiverAltitude int
+	MaxDistanceReceiverBearing  float64
+	NearestProcessed            bool
+	FurthestProcessed           bool
+
 	// Fields used by the distance leaderboards (see stats-distance.go).
 	// Populated via a LEFT JOIN against route_data, so they may be invalid
 	// (sql.NullString / sql.NullFloat64 not Valid) when no route was matched.
