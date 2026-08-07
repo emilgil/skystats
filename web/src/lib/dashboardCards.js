@@ -27,6 +27,8 @@ import MotionLowestAircraft from '../components/MotionLowestAircraft.svelte';
 import MotionFurthestFlownAircraft from '../components/MotionFurthestFlownAircraft.svelte';
 import MotionMostRemainingAircraft from '../components/MotionMostRemainingAircraft.svelte';
 import MotionLongestRouteAircraft from '../components/MotionLongestRouteAircraft.svelte';
+import MotionNearestAircraft from '../components/MotionNearestAircraft.svelte';
+import MotionFurthestRangeAircraft from '../components/MotionFurthestRangeAircraft.svelte';
 
 import WatchList from '../components/WatchList.svelte';
 import WatchHits from '../components/WatchHits.svelte';
@@ -62,6 +64,8 @@ export const dashboardCards = [
     { id: 'motion_furthest_flown', title: 'Furthest Flown', tab: 'motion-stat', component: MotionFurthestFlownAircraft },
     { id: 'motion_most_remaining', title: 'Most Remaining', tab: 'motion-stat', component: MotionMostRemainingAircraft },
     { id: 'motion_longest_route', title: 'Longest Route', tab: 'motion-stat', component: MotionLongestRouteAircraft },
+    { id: 'motion_nearest', title: 'Nearest', tab: 'motion-stat', component: MotionNearestAircraft },
+    { id: 'motion_furthest', title: 'Furthest', tab: 'motion-stat', component: MotionFurthestRangeAircraft },
 
     { id: 'watch_list', title: 'Watches', tab: 'watches', component: WatchList },
     { id: 'watch_hits', title: 'Watch Hits', tab: 'watches', component: WatchHits }
