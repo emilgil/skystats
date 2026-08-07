@@ -83,6 +83,20 @@ func getDistance(aircraft []float64) *float64 {
 	return &distance
 }
 
+func getBearing(aircraft []float64) float64 {
+	loc := []float64{getLon(), getLat()}
+	return normalizeBearing(getRuler().Bearing(loc, aircraft))
+}
+
+// normalizeBearing converts cheap-ruler's Bearing() output, which is in
+// (-180, 180], to a compass bearing in [0, 360).
+func normalizeBearing(bearing float64) float64 {
+	if bearing < 0 {
+		return bearing + 360
+	}
+	return bearing
+}
+
 func (pg *postgres) updateDatabase(nowEpoch float64, aircrafts []Aircraft) {
 
 	existingAircrafts := getAircraftsRecentlySeen(pg, nowEpoch, aircrafts)
