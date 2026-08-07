@@ -41,6 +41,7 @@
     let notifyGroupMil = true, notifyGroupGov = true, notifyGroupPol = true, notifyGroupCiv = true;
     let notifyRecordFastest = true, notifyRecordSlowest = true, notifyRecordHighest = true, notifyRecordLowest = true;
     let notifyRecordFurthestFlown = true, notifyRecordLongestRoute = true, notifyRecordMostRemaining = true;
+    let notifyRecordNearest = true, notifyRecordFurthestRange = true;
     let notificationCooldownMinutes = 60;
     let notificationsChanged = false;
     let isTestingNotification = false;
@@ -62,7 +63,9 @@
         { key: 'lowest', label: 'Lowest' },
         { key: 'furthest_flown', label: 'Furthest flown' },
         { key: 'longest_route', label: 'Longest route' },
-        { key: 'most_remaining', label: 'Most remaining' }
+        { key: 'most_remaining', label: 'Most remaining' },
+        { key: 'nearest', label: 'Nearest' },
+        { key: 'furthest_range', label: 'Furthest' }
     ];
 
     let selectedCategories = new Set();
@@ -147,6 +150,8 @@
         if ($settings.notify_record_furthest_flown) notifyRecordFurthestFlown = $settings.notify_record_furthest_flown.setting_value === 'true';
         if ($settings.notify_record_longest_route) notifyRecordLongestRoute = $settings.notify_record_longest_route.setting_value === 'true';
         if ($settings.notify_record_most_remaining) notifyRecordMostRemaining = $settings.notify_record_most_remaining.setting_value === 'true';
+        if ($settings.notify_record_nearest) notifyRecordNearest = $settings.notify_record_nearest.setting_value === 'true';
+        if ($settings.notify_record_furthest_range) notifyRecordFurthestRange = $settings.notify_record_furthest_range.setting_value === 'true';
         if ($settings.notification_cooldown_minutes) notificationCooldownMinutes = parseInt($settings.notification_cooldown_minutes.setting_value);
     }
 
@@ -200,7 +205,9 @@
             notify_record_lowest: notifyRecordLowest.toString(),
             notify_record_furthest_flown: notifyRecordFurthestFlown.toString(),
             notify_record_longest_route: notifyRecordLongestRoute.toString(),
-            notify_record_most_remaining: notifyRecordMostRemaining.toString()
+            notify_record_most_remaining: notifyRecordMostRemaining.toString(),
+            notify_record_nearest: notifyRecordNearest.toString(),
+            notify_record_furthest_range: notifyRecordFurthestRange.toString()
         };
         const success = await settings.save(updates);
         if (success) notificationsChanged = false;
@@ -427,6 +434,8 @@
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordFurthestFlown} on:change={handleNotificationChange} /><span class="text-sm">Furthest flown</span></label>
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordLongestRoute} on:change={handleNotificationChange} /><span class="text-sm">Longest route</span></label>
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordMostRemaining} on:change={handleNotificationChange} /><span class="text-sm">Most remaining</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordNearest} on:change={handleNotificationChange} /><span class="text-sm">Nearest</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" bind:checked={notifyRecordFurthestRange} on:change={handleNotificationChange} /><span class="text-sm">Furthest</span></label>
                                 </div>
                             </div>
 
