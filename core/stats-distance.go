@@ -232,3 +232,20 @@ func nullStr(ns sql.NullString) any {
 	}
 	return nil
 }
+
+// nullInt and nullFloat are nullInt's numeric counterparts, used by the
+// receiver-distance stats (stats-receiver-distance.go) whose altitude/bearing
+// columns are nullable for the same reason nullStr's string columns are.
+func nullInt(ni sql.NullInt64) any {
+	if ni.Valid {
+		return ni.Int64
+	}
+	return nil
+}
+
+func nullFloat(nf sql.NullFloat64) any {
+	if nf.Valid {
+		return nf.Float64
+	}
+	return nil
+}

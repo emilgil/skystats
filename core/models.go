@@ -69,16 +69,19 @@ type Aircraft struct {
 	// Running min/max distance-to-receiver for Nearest/Furthest, updated on
 	// every 2s position tick (see updateExistingAircrafts in aircraft.go),
 	// finalized by updateReceiverDistanceStatistics once the flight goes
-	// stale. Distance uses sql.NullFloat64 so "never observed this session"
-	// is distinguishable from "0 km away"; altitude/bearing are always
-	// written in the same branch as the distance so they don't need
-	// independent nullability.
+	// stale. All six columns are nullable: rows written before this feature
+	// shipped (or never touched by the new hot-path code) have every one of
+	// them NULL, not just the distance — a plain int/float64 destination
+	// fails a NULL scan and, in pgx v5, poisons the rest of that query's row
+	// iteration, so getAircraftsForReceiverDistanceStatistics must treat all
+	// six as nullable even though a row written by the new code always sets
+	// them together.
 	MinDistanceReceiver         sql.NullFloat64
-	MinDistanceReceiverAltitude int
-	MinDistanceReceiverBearing  float64
+	MinDistanceReceiverAltitude sql.NullInt64
+	MinDistanceReceiverBearing  sql.NullFloat64
 	MaxDistanceReceiver         sql.NullFloat64
-	MaxDistanceReceiverAltitude int
-	MaxDistanceReceiverBearing  float64
+	MaxDistanceReceiverAltitude sql.NullInt64
+	MaxDistanceReceiverBearing  sql.NullFloat64
 	NearestProcessed            bool
 	FurthestProcessed           bool
 
