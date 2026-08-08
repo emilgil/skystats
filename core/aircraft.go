@@ -374,13 +374,13 @@ func updateExistingAircrafts(pg *postgres, nowEpoch float64, aircrafts []Aircraf
 		bearing := getBearing([]float64{aircraft.Lon, aircraft.Lat})
 		if !existingAircraft.MinDistanceReceiver.Valid || *lastSeenDistance < existingAircraft.MinDistanceReceiver.Float64 {
 			existingAircraft.MinDistanceReceiver = sql.NullFloat64{Float64: *lastSeenDistance, Valid: true}
-			existingAircraft.MinDistanceReceiverAltitude = aircraft.AltBaro
-			existingAircraft.MinDistanceReceiverBearing = bearing
+			existingAircraft.MinDistanceReceiverAltitude = sql.NullInt64{Int64: int64(aircraft.AltBaro), Valid: true}
+			existingAircraft.MinDistanceReceiverBearing = sql.NullFloat64{Float64: bearing, Valid: true}
 		}
 		if !existingAircraft.MaxDistanceReceiver.Valid || *lastSeenDistance > existingAircraft.MaxDistanceReceiver.Float64 {
 			existingAircraft.MaxDistanceReceiver = sql.NullFloat64{Float64: *lastSeenDistance, Valid: true}
-			existingAircraft.MaxDistanceReceiverAltitude = aircraft.AltBaro
-			existingAircraft.MaxDistanceReceiverBearing = bearing
+			existingAircraft.MaxDistanceReceiverAltitude = sql.NullInt64{Int64: int64(aircraft.AltBaro), Valid: true}
+			existingAircraft.MaxDistanceReceiverBearing = sql.NullFloat64{Float64: bearing, Valid: true}
 		}
 
 		// Update destination distance

@@ -90,16 +90,16 @@ func updateNearestAircraft(pg *postgres, aircrafts []Aircraft) {
 		}
 		upsertFlightHistory(pg, a.Hex, a.Flight, a.R, a.T, a.FirstSeen, a.LastSeen, map[string]any{
 			"min_distance_receiver":          a.MinDistanceReceiver.Float64,
-			"min_distance_receiver_altitude": a.MinDistanceReceiverAltitude,
-			"min_distance_receiver_bearing":  a.MinDistanceReceiverBearing,
+			"min_distance_receiver_altitude": nullInt(a.MinDistanceReceiverAltitude),
+			"min_distance_receiver_bearing":  nullFloat(a.MinDistanceReceiverBearing),
 		})
 		candidates = append(candidates, recordCandidate{
 			Hex: a.Hex, Flight: a.Flight, Registration: a.R, Type: a.T,
 			FirstSeen: a.FirstSeen, LastSeen: a.LastSeen,
 			MetricValue: a.MinDistanceReceiver.Float64,
 			Details: map[string]any{
-				"min_distance_receiver_altitude": a.MinDistanceReceiverAltitude,
-				"min_distance_receiver_bearing":  a.MinDistanceReceiverBearing,
+				"min_distance_receiver_altitude": nullInt(a.MinDistanceReceiverAltitude),
+				"min_distance_receiver_bearing":  nullFloat(a.MinDistanceReceiverBearing),
 			},
 		})
 	}
@@ -125,16 +125,16 @@ func updateFurthestRangeAircraft(pg *postgres, aircrafts []Aircraft) {
 		}
 		upsertFlightHistory(pg, a.Hex, a.Flight, a.R, a.T, a.FirstSeen, a.LastSeen, map[string]any{
 			"max_distance_receiver":          a.MaxDistanceReceiver.Float64,
-			"max_distance_receiver_altitude": a.MaxDistanceReceiverAltitude,
-			"max_distance_receiver_bearing":  a.MaxDistanceReceiverBearing,
+			"max_distance_receiver_altitude": nullInt(a.MaxDistanceReceiverAltitude),
+			"max_distance_receiver_bearing":  nullFloat(a.MaxDistanceReceiverBearing),
 		})
 		candidates = append(candidates, recordCandidate{
 			Hex: a.Hex, Flight: a.Flight, Registration: a.R, Type: a.T,
 			FirstSeen: a.FirstSeen, LastSeen: a.LastSeen,
 			MetricValue: a.MaxDistanceReceiver.Float64,
 			Details: map[string]any{
-				"max_distance_receiver_altitude": a.MaxDistanceReceiverAltitude,
-				"max_distance_receiver_bearing":  a.MaxDistanceReceiverBearing,
+				"max_distance_receiver_altitude": nullInt(a.MaxDistanceReceiverAltitude),
+				"max_distance_receiver_bearing":  nullFloat(a.MaxDistanceReceiverBearing),
 			},
 		})
 	}
